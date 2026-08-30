@@ -165,16 +165,15 @@ function validateRunInput(input: WiroRunInput) {
 export function wiroLanguageLockedPrompt(prompt: string) {
   const brief = prompt.trim();
   if (!brief) throw new Error("wiro_invalid_prompt");
-  const quotedDialogue = brief.match(
-    /"[^"\n]{1,240}"|“[^”\n]{1,240}”|‘[^’\n]{1,240}’/,
-  )?.[0];
-  const hasQuotedDialogue = Boolean(quotedDialogue);
+  const dialoguePattern = /"[^"\n]{1,240}"|“[^”\n]{1,240}”|‘[^’\n]{1,240}’/g;
+  const quotedDialogue = brief.match(dialoguePattern) || [];
+  const hasQuotedDialogue = quotedDialogue.length > 0;
   const wantsTurkish =
     /\b(türkçe|turkish|türkçe konuş|türkçe diyalog|türkçe replik)\b/i.test(
       brief,
     );
   const quotedTurkish =
-    wantsTurkish || /[çğıöşüÇĞİÖŞÜ]/.test(quotedDialogue || "");
+    wantsTurkish || quotedDialogue.some((line) => /[çğıöşüÇĞİÖŞÜ]/.test(line));
   const audioPolicy = hasQuotedDialogue
     ? quotedTurkish
       ? "AUDIO MODE — EXACT TURKISH DIALOGUE: The only spoken language is Turkish (tr-TR). One clearly visible native speaker says each assigned quoted Turkish line exactly once with natural Istanbul pronunciation and synchronized mouth movement. Do not alter, translate, paraphrase, repeat, extend, or add words. No other voices, dialogue, narration, pseudo-language, or crowd speech. If exact Turkish cannot be produced, use non-vocal ambience instead."
@@ -182,7 +181,31 @@ export function wiroLanguageLockedPrompt(prompt: string) {
     : wantsTurkish
       ? "AUDIO MODE — TURKISH SPEECH ONLY: The only spoken language is natural Turkish (tr-TR). Use one clearly visible native speaker and create one short, scene-appropriate Turkish sentence of at most eight words, spoken exactly once with natural Istanbul pronunciation and synchronized mouth movement. No other voices, narration, repeated speech, pseudo-language, or crowd speech. If natural Turkish cannot be produced, use non-vocal ambience instead."
       : "AUDIO MODE — NO SPEECH: Generate environmental ambience and sound effects only. No human voice, intelligible words, narration, commentary, vocals, chants, whispers, pseudo-language, or crowd speech in any language.";
-  return `AUDIO LANGUAGE POLICY — HIGHEST PRIORITY: ${audioPolicy} All scene descriptions, viewer attribution, timing, camera, style, and continuity instructions are silent production directions and must never be recited. Do not add narration, translation, paraphrasing, improvisation, subtitles, or additional speech.\n\n[SILENT PRODUCTION BRIEF]\n${brief}\n[END SILENT PRODUCTION BRIEF]`;
+  let silentBrief = brief;
+  for (const line of quotedDialogue)
+    silentBrief = silentBrief.replace(
+      line,
+      "[the exact dialogue is provided only in the audible words block]",
+    );
+  silentBrief = silentBrief.replace(
+    /\[SILENT VIEWER STORY DATA\]([\s\S]*?)\[END SILENT VIEWER STORY DATA\]/g,
+    (_match, story: string) => {
+      const sanitized = story
+        .replace(/(^|\s·\s)\s*[A-Za-z0-9_-]{1,18}:\s*/g, "$1")
+        .replace(
+          /\b(?:türkçe|turkish|desin|söylesin|konuşsun|konuşur|diyor|says?|speaks?)\b/giu,
+          " ",
+        )
+        .replace(/\s+([.,;!?])/g, "$1")
+        .replace(/\s{2,}/g, " ")
+        .trim();
+      return `[SILENT VIEWER STORY DATA] ${sanitized} [END SILENT VIEWER STORY DATA]`;
+    },
+  );
+  const audibleWords = hasQuotedDialogue
+    ? `\n\n[ONLY AUDIBLE WORDS — SPEAK VERBATIM ONCE]\n${quotedDialogue.join("\n")}\n[END ONLY AUDIBLE WORDS]`
+    : "";
+  return `AUDIO LANGUAGE POLICY — HIGHEST PRIORITY: ${audioPolicy} All scene descriptions, viewer attribution, timing, camera, style, and continuity instructions are silent production directions and must never be recited. Do not add narration, translation, paraphrasing, improvisation, subtitles, or additional speech.\n\n[SILENT PRODUCTION BRIEF]\n${silentBrief}\n[END SILENT PRODUCTION BRIEF]${audibleWords}`;
 }
 
 export function wiroGenerationSeed(configured: unknown, jobId: string) {

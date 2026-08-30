@@ -72,6 +72,21 @@ describe("wiro spoken-language policy", () => {
     expect(prompt).toContain("use non-vocal ambience instead");
   });
 
+  it("extracts quoted speech from one chat message without reciting directions", () => {
+    const prompt = wiroLanguageLockedPrompt(
+      'Create a scene. [SILENT VIEWER STORY DATA] kaptan: Balıkçı Türkçe "Bugün deniz çok sakin." desin. [END SILENT VIEWER STORY DATA] Use one shot.',
+    );
+    expect(prompt).toContain("[ONLY AUDIBLE WORDS — SPEAK VERBATIM ONCE]");
+    expect(prompt).toContain('"Bugün deniz çok sakin."');
+    expect(prompt.match(/"Bugün deniz çok sakin\."/g)).toHaveLength(1);
+    expect(prompt).toContain(
+      "Balıkçı [the exact dialogue is provided only in the audible words block].",
+    );
+    expect(prompt).not.toContain("kaptan:");
+    expect(prompt).not.toContain("Türkçe");
+    expect(prompt).not.toContain("desin");
+  });
+
   it("forbids invented voices when the scene has no quoted dialogue", () => {
     const prompt = wiroLanguageLockedPrompt("Fire in the hole!!! Goal");
     expect(prompt).toContain("AUDIO MODE — NO SPEECH");
