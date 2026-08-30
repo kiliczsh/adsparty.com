@@ -77,10 +77,11 @@ export function boundedRateHit(
   now: number,
   limit = 5,
   maxBuckets = 2_000,
+  windowMs = 30_000,
 ) {
   const buckets: Record<string, number[]> = {};
   for (const [bucket, timestamps] of Object.entries(current)) {
-    const active = timestamps.filter((time) => now - time < 30_000);
+    const active = timestamps.filter((time) => now - time < windowMs);
     if (active.length) buckets[bucket] = active;
   }
   if (!buckets[key] && Object.keys(buckets).length >= maxBuckets)

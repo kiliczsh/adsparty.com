@@ -62,6 +62,7 @@ const I18N = {
       "Sohbet doğrulaması yüklenemedi; yayını izlemeye devam edebilirsin.",
     verifyFirst: "Önce doğrulamayı tamamla.",
     sendFailed: "Mesaj gönderilemedi. Doğrulamayı tamamlayıp tekrar dene.",
+    cooldown: "Yeni bir mesaj göndermek için 1 dakika bekle.",
     chatUnavailable: "Sohbet, kanal doğrulaması bağlandığında açılacak.",
     status: {
       pending: "gönderiliyor",
@@ -106,6 +107,7 @@ const I18N = {
       "Chat verification could not load; watching still works.",
     verifyFirst: "Complete verification first.",
     sendFailed: "Message was not sent. Complete verification and try again.",
+    cooldown: "Wait 1 minute before sending another message.",
     chatUnavailable: "Chat opens when station verification is connected.",
     status: {
       pending: "pending",
@@ -877,15 +879,19 @@ $("#chatForm").addEventListener("submit", async (e) => {
     addBubble({ id: j.id, user, msg, status: j.status });
     mine.add(j.id);
     $("#msg").value = "";
-  } catch {
+  } catch (error) {
     clearTimeout(reconcile);
-    if (!document.querySelector(`[data-id="${pending}"]`))
+    const cooldown = error instanceof Error && error.message === "cooldown";
+    if (!cooldown && !document.querySelector(`[data-id="${pending}"]`))
       addBubble({ id: pending, user, msg, status: "failed" });
     const p = document.querySelector(`[data-id="${pending}"]`);
-    p.className = "bubble failed";
-    p.querySelector("i").dataset.status = "failed";
-    p.querySelector("i").textContent = statusLabel("failed");
-    setVerify("sendFailed");
+    if (cooldown) p?.remove();
+    else if (p) {
+      p.className = "bubble failed";
+      p.querySelector("i").dataset.status = "failed";
+      p.querySelector("i").textContent = statusLabel("failed");
+    }
+    setVerify(cooldown ? "cooldown" : "sendFailed");
   } finally {
     sending = false;
     $("#chatForm button").disabled = false;

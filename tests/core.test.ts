@@ -364,6 +364,19 @@ describe("admin message actions", () => {
     expect(adminMessageActionAllowed("aired", "requeue")).toBe(false);
   });
 });
+
+describe("chat cooldown", () => {
+  it("supports a one-minute viewer window", () => {
+    const first = boundedRateHit({}, "viewer", 1_000, 1, 2_000, 60_000);
+    expect(first.allowed).toBe(true);
+    expect(
+      boundedRateHit(first.buckets, "viewer", 60_999, 1, 2_000, 60_000).allowed,
+    ).toBe(false);
+    expect(
+      boundedRateHit(first.buckets, "viewer", 61_000, 1, 2_000, 60_000).allowed,
+    ).toBe(true);
+  });
+});
 describe("admin clip actions", () => {
   it("allows only state-changing enable/disable actions", () => {
     expect(adminClipActionAllowed(1, "disable")).toBe(true);

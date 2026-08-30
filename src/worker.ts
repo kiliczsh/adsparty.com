@@ -212,6 +212,13 @@ async function chat(req: Request, env: Env) {
     new Request(`https://station/rate?key=${encodeURIComponent(key)}`),
   );
   if (rate.status === 429) return json({ error: "rate_limited" }, 429);
+  const cooldown = await station(env).fetch(
+    new Request(
+      `https://station/rate?key=${encodeURIComponent(`chat-viewer:${v.id}`)}&limit=1&window=60000`,
+    ),
+  );
+  if (cooldown.status === 429)
+    return json({ error: "cooldown", retry_after: 60 }, 429);
   const p = await policy(env);
   const rejection = hardReject(msg) ? "hard_reject" : policyReject(msg, p);
   const now = Math.floor(Date.now() / 1000);

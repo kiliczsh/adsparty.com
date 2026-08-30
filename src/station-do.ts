@@ -334,11 +334,17 @@ export class Station extends DurableObject<Env> {
         1,
         Math.min(60, Number(u.searchParams.get("limit")) || 5),
       );
+      const windowMs = Math.max(
+        1_000,
+        Math.min(300_000, Number(u.searchParams.get("window")) || 30_000),
+      );
       const result = boundedRateHit(
         s.rateBuckets || {},
         key,
         Date.now(),
         limit,
+        2_000,
+        windowMs,
       );
       s.rateBuckets = result.buckets;
       await this.save(s);
