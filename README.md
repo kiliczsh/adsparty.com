@@ -1,10 +1,21 @@
 # AdsParty
 
 An endless, chat-directed AI television station running on Cloudflare. Viewers
-submit scene ideas; a Durable Object coordinates selection and playback, fal.ai
-generates video, and the station continuously mixes fresh clips with reruns.
+submit scene ideas; a Durable Object coordinates selection and playback, an
+asynchronous video provider generates each clip, and the station continuously
+mixes fresh clips with reruns.
 
 Production: [adsparty.com](https://adsparty.com)
+
+## Sponsors
+
+Video generation is sponsored by
+[Wiro](https://wiro.ai/models/fastvideo/fast-h3?utm_source=adsparty.com), which
+provides the FastVideo/Fast-H3 integration used by the production station.
+Thanks to Wiro for supporting the project and its continuous AI television
+experiment.
+
+The fal.ai adapter remains available as an optional video provider.
 
 ## Architecture
 
@@ -12,7 +23,7 @@ Production: [adsparty.com](https://adsparty.com)
 - Durable Object: authoritative station clock, live window and rate state
 - D1: messages, generation jobs, clips, likes and settings
 - R2: immutable MPEG-TS archive segments
-- Queue: idempotent fal.ai generation and packaging work
+- Queue: idempotent video generation and media packaging work
 - Container: authenticated ffmpeg/ffprobe media packaging
 - Vanilla JavaScript frontend with hls.js fallback playback
 
@@ -25,7 +36,7 @@ and chat do not depend on billing.
 - A Cloudflare account with Workers, D1, R2, Queues, Durable Objects and
   Containers enabled
 - Wrangler authenticated for the target account
-- fal.ai API credentials
+- Wiro API credentials, or fal.ai credentials when using the optional adapter
 - Cloudflare Turnstile credentials for chat
 
 ## Configuration
@@ -39,7 +50,8 @@ cp .env.example .dev.vars
 
 Application secrets:
 
-- `FAL_KEY`
+- `WIRO_API_KEY` and `WIRO_API_SECRET` for the default Wiro provider
+- `FAL_KEY` only when `VIDEO_PROVIDER` is set to `fal`
 - `TURNSTILE_SECRET_KEY`
 - `VIEWER_SIGNING_KEY`
 - `ADMIN_TOKEN`
@@ -57,7 +69,8 @@ Never commit `.dev.vars`, API tokens or provider keys. Production secrets can
 be set with:
 
 ```sh
-npx wrangler secret put FAL_KEY
+npx wrangler secret put WIRO_API_KEY
+npx wrangler secret put WIRO_API_SECRET
 ```
 
 Repeat that command for each configured production secret.
@@ -89,10 +102,12 @@ R2 and Queue data. The viewer-facing brand remains independently configurable.
 
 ## Operations
 
-The operator console is available at `/admin.html` and requires `ADMIN_TOKEN`.
-It can pause/resume generation, inspect prompt and video queues, change clip
-duration and moderation policy, retry provider jobs, and disable or remove
-content.
+The operator console is available at `/admin.html`. On a new installation,
+`ADMIN_TOKEN` authorizes creation of the first administrator account; after
+bootstrap, administrators sign in with username and password using a secure,
+HTTP-only session cookie. The console can add administrators, pause/resume
+generation, inspect prompt and video queues, change clip duration and moderation
+policy, retry provider jobs, and disable or remove content.
 
 Useful commands:
 
@@ -109,8 +124,9 @@ targeting a fork or another environment.
 
 Public inputs are bounded and rendered as text, chat requires server-side
 Turnstile verification, viewer cookies are signed, administrative routes fail
-closed behind a bearer token, and the media container accepts only authenticated
-fal.media packaging requests. See [SECURITY.md](SECURITY.md) for reporting.
+closed behind server-side sessions, and the media container accepts only
+authenticated packaging requests from allowlisted Wiro and fal.ai media hosts.
+See [SECURITY.md](SECURITY.md) for reporting.
 
 ## License
 

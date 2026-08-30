@@ -7,14 +7,15 @@ const $ = (s) => document.querySelector(s),
     "graphic_violence",
     "non_graphic_violence",
   ];
-let token = sessionStorage.getItem("adsparty.adminToken") || "",
-  poll = null,
+let poll = null,
+  connected = false,
+  currentUser = null,
   busy = false;
-const auth = () => ({ authorization: `Bearer ${token}` });
 function text(selector, value) {
   $(selector).textContent = String(value ?? "—");
 }
 function setConnected(value) {
+  connected = value;
   $("#login").hidden = value;
   $("#console").hidden = !value;
   $("#disconnect").hidden = !value;
@@ -26,16 +27,37 @@ function setConnected(value) {
 }
 async function request(path, init = {}) {
   const headers = new Headers(init.headers || {});
-  headers.set("authorization", `Bearer ${token}`);
-  const r = await fetch(path, { ...init, headers, cache: "no-store" });
+  const r = await fetch(path, {
+    ...init,
+    headers,
+    cache: "no-store",
+    credentials: "same-origin",
+  });
+  const data = await r.json().catch(() => ({}));
   if (r.status === 401) {
-    sessionStorage.removeItem("adsparty.adminToken");
-    token = "";
+    currentUser = null;
     setConnected(false);
-    throw new Error("unauthorized");
+    throw new Error(data.error || "unauthorized");
   }
-  if (!r.ok) throw new Error(`request_${r.status}`);
-  return r.json();
+  if (!r.ok) throw new Error(data.error || `request_${r.status}`);
+  return data;
+}
+function renderAdminUsers(data) {
+  const list = $("#adminUsersList");
+  list.replaceChildren();
+  for (const user of data.users || []) {
+    const item = document.createElement("li"),
+      name = document.createElement("b"),
+      meta = document.createElement("small");
+    name.textContent = user.username;
+    meta.textContent = `${user.active ? "ACTIVE" : "DISABLED"} · ${user.role}`;
+    item.append(name, meta);
+    list.append(item);
+  }
+  text(
+    "#signedInAs",
+    currentUser ? `SIGNED IN AS ${currentUser.username}` : "SIGNED IN",
+  );
 }
 function renderPolicy(policy) {
   for (const name of fields)
@@ -47,7 +69,6 @@ function renderGeneration(settings) {
 function renderIntegrations(data) {
   for (const [id, key] of [
     ["#videoProviderState", "video_provider"],
-    ["#falState", "fal"],
     ["#wiroState", "wiro"],
     ["#packagerState", "media_packager"],
     ["#turnstileState", "turnstile"],
@@ -103,7 +124,7 @@ function renderStatus(status, meta) {
       : clip.mediaUrl
         ? "FRESH · DIRECT"
         : "FRESH";
-    chat.textContent = `${clip.filename || "FAL MP4"} · ${clip.chatText || "no attribution"}`;
+    chat.textContent = `${clip.filename || "SOURCE MP4"} · ${clip.chatText || "no attribution"}`;
     li.append(seq, mode, chat);
     flow.append(li);
   }
@@ -191,7 +212,7 @@ function renderQueue(data) {
       controls.className = "messageActions";
       check.type = "button";
       check.dataset.jobId = item.id;
-      check.textContent = "CHECK FAL";
+      check.textContent = `CHECK ${String(item.provider || "PROVIDER").toUpperCase()}`;
       controls.append(check);
       li.append(controls);
     }
@@ -254,7 +275,7 @@ function renderClips(data) {
   }
 }
 async function refresh() {
-  if (!token || busy) return;
+  if (!connected || busy) return;
   busy = true;
   try {
     const [status, meta, queue, clips, integrations] = await Promise.all([
@@ -276,31 +297,103 @@ async function refresh() {
   }
 }
 async function connect() {
-  const [policy, generation] = await Promise.all([
+  const [me, policy, generation, users] = await Promise.all([
+    request("/api/admin/auth/me"),
     request("/api/admin/policy"),
     request("/api/admin/generation"),
+    request("/api/admin/users"),
   ]);
-  sessionStorage.setItem("adsparty.adminToken", token);
+  currentUser = me.user;
   renderPolicy(policy);
   renderGeneration(generation);
+  renderAdminUsers(users);
   setConnected(true);
   await refresh();
 }
 $("#loginForm").addEventListener("submit", async (e) => {
   e.preventDefault();
-  token = $("#token").value.trim();
   text("#loginError", "");
   try {
+    await request("/api/admin/auth/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        username: $("#username").value.trim(),
+        password: $("#password").value,
+      }),
+    });
     await connect();
   } catch {
-    text("#loginError", "Access denied. Check the operator token.");
+    text("#loginError", "Access denied. Check username and password.");
   }
 });
-$("#disconnect").addEventListener("click", () => {
-  sessionStorage.removeItem("adsparty.adminToken");
-  token = "";
-  $("#token").value = "";
+$("#bootstrapForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  text("#loginError", "");
+  const username = $("#username").value.trim(),
+    password = $("#password").value;
+  if (!/^[A-Za-z0-9_-]{3,32}$/.test(username)) {
+    text("#loginError", "Username must be 3–32 letters, numbers, _ or -.");
+    return;
+  }
+  if (password.length < 12 || password.length > 128) {
+    text("#loginError", "Password must be 12–128 characters.");
+    return;
+  }
+  try {
+    await request("/api/admin/auth/bootstrap", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        username,
+        password,
+        bootstrap_token: $("#bootstrapToken").value,
+      }),
+    });
+    $("#bootstrapForm").hidden = true;
+    $("#loginForm").requestSubmit();
+  } catch (error) {
+    const messages = {
+      unauthorized: "Bootstrap token is incorrect.",
+      invalid_username: "Username must be 3–32 letters, numbers, _ or -.",
+      invalid_password: "Password must be 12–128 characters.",
+      bootstrap_disabled: "The first admin has already been created.",
+      password_hash_failed: "Password security setup failed on the server.",
+      admin_insert_failed: "Admin database insert failed.",
+    };
+    text(
+      "#loginError",
+      messages[error.message] || "First admin creation failed.",
+    );
+  }
+});
+$("#disconnect").addEventListener("click", async () => {
+  await fetch("/api/admin/auth/logout", {
+    method: "POST",
+    credentials: "same-origin",
+  }).catch(() => {});
+  currentUser = null;
+  $("#password").value = "";
   setConnected(false);
+});
+$("#adminUserForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  text("#adminUserNote", "");
+  try {
+    await request("/api/admin/users", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        username: $("#newAdminUsername").value.trim(),
+        password: $("#newAdminPassword").value,
+      }),
+    });
+    e.currentTarget.reset();
+    renderAdminUsers(await request("/api/admin/users"));
+    text("#adminUserNote", "Admin user created.");
+  } catch {
+    text("#adminUserNote", "Admin user creation failed.");
+  }
 });
 $("#policyForm").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -453,4 +546,17 @@ $("#jobQueue").addEventListener("click", async (e) => {
     button.disabled = false;
   }
 });
-if (token) connect().catch(() => setConnected(false));
+async function restoreSession() {
+  const response = await fetch("/api/admin/auth/me", {
+    cache: "no-store",
+    credentials: "same-origin",
+  });
+  if (response.ok) {
+    await connect();
+    return;
+  }
+  const state = await response.json().catch(() => ({}));
+  $("#bootstrapForm").hidden = !state.bootstrap_required;
+  setConnected(false);
+}
+restoreSession().catch(() => setConnected(false));

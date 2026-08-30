@@ -57,6 +57,27 @@ type WiroDetailResponse = WiroResponse & {
   tasklist?: WiroTask[];
 };
 
+function apiErrorCode(errors: unknown[]) {
+  const first = errors[0];
+  const raw =
+    typeof first === "string"
+      ? first
+      : first && typeof first === "object"
+        ? String(
+            (first as Record<string, unknown>).code ||
+              (first as Record<string, unknown>).message ||
+              (first as Record<string, unknown>).error ||
+              "",
+          )
+        : "";
+  const normalized = raw
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 80);
+  return normalized ? `wiro_api_${normalized}` : "wiro_api_error";
+}
+
 const durations = new Set(
   Array.from({ length: 11 }, (_, index) => String(index + 5)),
 );
@@ -98,7 +119,6 @@ async function wiroHeaders(credentials: WiroCredentials) {
     throw new Error("wiro_not_configured");
   const nonce = randomNonce();
   return {
-    "content-type": "multipart/form-data",
     "x-api-key": credentials.apiKey,
     "x-nonce": nonce,
     "x-signature": await wiroSignature(
@@ -115,15 +135,19 @@ async function wiroPost<T extends WiroResponse>(
   credentials: WiroCredentials,
   fetcher: typeof fetch,
 ): Promise<T> {
+  const form = new FormData();
+  for (const [name, value] of Object.entries(payload))
+    form.set(name, String(value));
   const response = await fetcher(endpoint, {
     method: "POST",
     headers: await wiroHeaders(credentials),
-    body: JSON.stringify(payload),
+    body: form,
   });
   if (!response.ok) throw new Error(`wiro_http_${response.status}`);
   const result = (await response.json()) as T;
-  if (!result.result || !Array.isArray(result.errors) || result.errors.length)
-    throw new Error("wiro_api_error");
+  if (!Array.isArray(result.errors)) throw new Error("wiro_api_error");
+  if (!result.result || result.errors.length)
+    throw new Error(apiErrorCode(result.errors));
   return result;
 }
 
@@ -214,6 +238,13 @@ export function wiroVideoOutput(task: WiroTask): WiroOutput {
   );
   if (!output) throw new Error("wiro_result_missing_video");
   return output;
+}
+
+export function wiroErrorCode(error: unknown, fallback: string) {
+  const code = String(error).match(
+    /\bwiro_(?:http_[1-5]\d{2}|api_[a-z0-9_]{1,80}|submit_missing_task|invalid_(?:prompt|duration|resolution|ratio|seed)|not_configured)\b/,
+  )?.[0];
+  return code || fallback;
 }
 
 export async function submitAndPollWiroTask(

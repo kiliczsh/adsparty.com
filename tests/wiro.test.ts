@@ -6,6 +6,7 @@ import {
   getWiroTaskDetail,
   submitAndPollWiroTask,
   submitWiroTask,
+  wiroErrorCode,
   wiroSignature,
   wiroTaskState,
   wiroVideoOutput,
@@ -30,8 +31,10 @@ const response = (body: unknown) =>
   );
 type RecordedFetchCall = [
   string,
-  { method: string; headers: Record<string, string>; body: string },
+  { method: string; headers: Record<string, string>; body: FormData },
 ];
+const formValues = (form: FormData, names: string[]) =>
+  Object.fromEntries(names.map((name) => [name, form.get(name)]));
 
 describe("wiro authentication", () => {
   it("signs API secret plus nonce with the API key using HMAC-SHA256", async () => {
@@ -41,6 +44,26 @@ describe("wiro authentication", () => {
     expect(await wiroSignature("project-key", "project-secret", "123")).toBe(
       expected,
     );
+  });
+});
+
+describe("wiro error hygiene", () => {
+  it("retains safe provider error classes without exposing response bodies", () => {
+    expect(wiroErrorCode(new Error("wiro_http_401"), "failed")).toBe(
+      "wiro_http_401",
+    );
+    expect(wiroErrorCode(new Error("secret response body"), "failed")).toBe(
+      "failed",
+    );
+  });
+
+  it("normalizes a provider API error without retaining punctuation", async () => {
+    const fetcher = vi.fn(() =>
+      response({ result: false, errors: ["Invalid project or coupon!"] }),
+    );
+    await expect(
+      submitWiroTask(input, credentials, fetcher as typeof fetch),
+    ).rejects.toThrow("wiro_api_invalid_project_or_coupon");
   });
 });
 
@@ -62,11 +85,19 @@ describe("wiro task lifecycle", () => {
     )[0]!;
     expect(url).toBe(WIRO_RUN_ENDPOINT);
     expect(init.method).toBe("POST");
-    expect(init.headers["content-type"]).toBe("multipart/form-data");
+    expect(init.headers["content-type"]).toBeUndefined();
     expect(init.headers["x-api-key"]).toBe("project-key");
     expect(init.headers["x-nonce"]).toMatch(/^\d+$/);
     expect(init.headers["x-signature"]).toMatch(/^[a-f0-9]{64}$/);
-    expect(JSON.parse(init.body)).toEqual(input);
+    expect(
+      formValues(init.body, [
+        "prompt",
+        "duration",
+        "resolution",
+        "ratio",
+        "seed",
+      ]),
+    ).toEqual({ ...input, seed: String(input.seed) });
   });
 
   it("polls by task id until the documented completed status", async () => {
@@ -119,7 +150,7 @@ describe("wiro task lifecycle", () => {
     expect(result.output.url).toBe("https://cdn1.wiro.ai/output/0.mp4");
     expect(sleep).toHaveBeenCalledWith(15_000);
     expect(fetcher.mock.calls[1][0]).toBe(WIRO_DETAIL_ENDPOINT);
-    expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({
+    expect(formValues(fetcher.mock.calls[1][1].body, ["taskid"])).toEqual({
       taskid: "2221",
     });
   });
@@ -169,7 +200,7 @@ describe("wiro task lifecycle", () => {
       getWiroTaskDetail("2221", credentials, fetcher as typeof fetch),
     ).resolves.toMatchObject({ id: "2221", status: "task_start" });
     const calls = fetcher.mock.calls as unknown as RecordedFetchCall[];
-    expect(JSON.parse(calls[0]![1].body)).toEqual({
+    expect(formValues(calls[0]![1].body, ["taskid"])).toEqual({
       taskid: "2221",
     });
   });

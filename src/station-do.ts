@@ -222,6 +222,32 @@ export class Station extends DurableObject<Env> {
     s.viewers = Object.fromEntries(
       Object.entries(s.viewers).filter(([, t]) => now - t < 45),
     );
+    if (s.window.length) {
+      const clipIds = [
+        ...new Set(s.window.map((entry) => entry.clipId)),
+      ].filter((id) => Number.isInteger(id) && id > 0);
+      if (clipIds.length) {
+        const placeholders = clipIds.map(() => "?").join(",");
+        const active = await this.env.DB.prepare(
+          `SELECT id FROM clips WHERE ready=1 AND id IN (${placeholders})`,
+        )
+          .bind(...clipIds)
+          .all<{ id: number }>();
+        const activeIds = new Set(active.results.map((clip) => clip.id));
+        const removed = s.window.filter(
+          (entry) => !activeIds.has(entry.clipId),
+        ).length;
+        if (removed) {
+          s.window = s.window.filter((entry) => activeIds.has(entry.clipId));
+          s.recentClipIds = (s.recentClipIds || []).filter((id) =>
+            activeIds.has(id),
+          );
+          console.log(
+            JSON.stringify({ event: "station_window_pruned", clips: removed }),
+          );
+        }
+      }
+    }
     await this.env.DB.prepare(
       "UPDATE messages SET status='aired',aired_at=COALESCE(aired_at,(SELECT first_aired_at FROM clips WHERE clips.generation_job_id=messages.job_id)) WHERE status='ready' AND EXISTS (SELECT 1 FROM clips WHERE clips.generation_job_id=messages.job_id AND clips.first_aired_at IS NOT NULL)",
     ).run();

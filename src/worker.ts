@@ -26,10 +26,23 @@ import type { Env, GenerationMessage, PackagingMessage } from "./types";
 import {
   getWiroTaskDetail,
   submitWiroTask,
+  wiroErrorCode,
   wiroRunInput,
   wiroTaskState,
   wiroVideoOutput,
 } from "./wiro";
+import {
+  ADMIN_SESSION_SECONDS,
+  adminSessionCookie,
+  adminSessionToken,
+  clearAdminSessionCookie,
+  newPasswordRecord,
+  randomHex,
+  sessionHash,
+  validAdminPassword,
+  validAdminUsername,
+  verifyPassword,
+} from "./admin-auth";
 export { Station, MediaPackager };
 const JSON_HEADERS = {
   "content-type": "application/json; charset=utf-8",
@@ -370,8 +383,23 @@ async function realtime(req: Request, env: Env) {
     headers,
   });
 }
-function admin(req: Request, env: Env) {
-  return validAdminBearer(req.headers.get("authorization"), env.ADMIN_TOKEN);
+type AdminIdentity = { id: number; username: string; role: "admin" };
+async function admin(req: Request, env: Env): Promise<AdminIdentity | null> {
+  const origin = req.headers.get("origin");
+  if (
+    !["GET", "HEAD"].includes(req.method) &&
+    origin &&
+    origin !== new URL(req.url).origin
+  )
+    return null;
+  const token = adminSessionToken(req.headers.get("cookie"));
+  if (!token) return null;
+  const now = Math.floor(Date.now() / 1000);
+  return env.DB.prepare(
+    "SELECT u.id,u.username,u.role FROM admin_sessions s JOIN admin_users u ON u.id=s.admin_user_id WHERE s.token_hash=? AND s.expires_at>? AND u.active=1 AND u.role='admin'",
+  )
+    .bind(await sessionHash(token), now)
+    .first<AdminIdentity>();
 }
 async function handle(req: Request, env: Env) {
   const u = new URL(req.url);
@@ -396,6 +424,215 @@ async function handle(req: Request, env: Env) {
     const bad = method(req, ["GET"]);
     if (bad) return bad;
     return station(env).fetch("https://station/bible");
+  }
+  if (u.pathname === "/api/admin/auth/me") {
+    const bad = method(req, ["GET"]);
+    if (bad) return bad;
+    const identity = await admin(req, env);
+    const count = Number(
+      (await env.DB.prepare(
+        "SELECT COUNT(*) n FROM admin_users WHERE active=1 AND role='admin'",
+      ).first("n")) || 0,
+    );
+    return identity
+      ? json({ authenticated: true, user: identity })
+      : json({ authenticated: false, bootstrap_required: count === 0 }, 401);
+  }
+  if (u.pathname === "/api/admin/auth/bootstrap") {
+    const bad = method(req, ["POST"]);
+    if (bad) return bad;
+    const input = (await body(req)) as {
+      username?: unknown;
+      password?: unknown;
+      bootstrap_token?: unknown;
+    };
+    const count = Number(
+      (await env.DB.prepare("SELECT COUNT(*) n FROM admin_users").first("n")) ||
+        0,
+    );
+    if (count !== 0) return json({ error: "bootstrap_disabled" }, 409);
+    if (
+      !validAdminBearer(
+        `Bearer ${String(input.bootstrap_token || "")}`,
+        env.ADMIN_TOKEN,
+      )
+    )
+      return json({ error: "unauthorized" }, 401);
+    const username = String(input.username || "");
+    const password = String(input.password || "");
+    if (!validAdminUsername(username))
+      return json({ error: "invalid_username" }, 400);
+    if (!validAdminPassword(password))
+      return json({ error: "invalid_password" }, 400);
+    let passwordRecord;
+    try {
+      passwordRecord = await newPasswordRecord(password);
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          event: "admin_bootstrap_hash_failed",
+          error: String(error).slice(0, 120),
+        }),
+      );
+      return json({ error: "password_hash_failed" }, 500);
+    }
+    const now = Math.floor(Date.now() / 1000);
+    let created;
+    try {
+      created = await env.DB.prepare(
+        "INSERT INTO admin_users(username,password_salt,password_hash,password_iterations,role,active,created_at,updated_at) SELECT ?,?,?,?,\u0027admin\u0027,1,?,? WHERE NOT EXISTS (SELECT 1 FROM admin_users) RETURNING id",
+      )
+        .bind(
+          username,
+          passwordRecord.salt,
+          passwordRecord.hash,
+          passwordRecord.iterations,
+          now,
+          now,
+        )
+        .first<{ id: number }>();
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          event: "admin_bootstrap_insert_failed",
+          error: String(error).slice(0, 120),
+        }),
+      );
+      return json({ error: "admin_insert_failed" }, 500);
+    }
+    if (!created) return json({ error: "bootstrap_disabled" }, 409);
+    console.log(JSON.stringify({ event: "admin_bootstrapped", username }));
+    return json({ created: true, username }, 201);
+  }
+  if (u.pathname === "/api/admin/auth/login") {
+    const bad = method(req, ["POST"]);
+    if (bad) return bad;
+    const key = await networkRateKey(req, env);
+    const rate = await station(env).fetch(
+      `https://station/rate?key=${encodeURIComponent(`admin-login:${key}`)}&limit=5&window=300000`,
+    );
+    if (rate.status === 429)
+      return json({ error: "rate_limited", retry_after: 300 }, 429);
+    const input = (await body(req)) as {
+      username?: unknown;
+      password?: unknown;
+    };
+    const username = String(input.username || "");
+    const password = String(input.password || "");
+    const user = validAdminUsername(username)
+      ? await env.DB.prepare(
+          "SELECT id,username,password_salt,password_hash,password_iterations,role FROM admin_users WHERE username=? COLLATE NOCASE AND active=1 AND role='admin'",
+        )
+          .bind(username)
+          .first<{
+            id: number;
+            username: string;
+            password_salt: string;
+            password_hash: string;
+            password_iterations: number;
+            role: "admin";
+          }>()
+      : null;
+    const valid =
+      user &&
+      validAdminPassword(password) &&
+      (await verifyPassword(
+        password,
+        user.password_salt,
+        user.password_hash,
+        user.password_iterations,
+      ));
+    if (!valid || !user) {
+      console.warn(JSON.stringify({ event: "admin_login_failed" }));
+      return json({ error: "invalid_credentials" }, 401);
+    }
+    const token = randomHex(32);
+    const now = Math.floor(Date.now() / 1000);
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM admin_sessions WHERE expires_at<=?").bind(
+        now,
+      ),
+      env.DB.prepare(
+        "INSERT INTO admin_sessions(token_hash,admin_user_id,created_at,expires_at,last_seen_at) VALUES(?,?,?,?,?)",
+      ).bind(
+        await sessionHash(token),
+        user.id,
+        now,
+        now + ADMIN_SESSION_SECONDS,
+        now,
+      ),
+      env.DB.prepare(
+        "UPDATE admin_users SET last_login_at=?,updated_at=updated_at WHERE id=?",
+      ).bind(now, user.id),
+    ]);
+    console.log(
+      JSON.stringify({ event: "admin_login", admin_user_id: user.id }),
+    );
+    return json(
+      { authenticated: true, user: { id: user.id, username: user.username } },
+      200,
+      { "set-cookie": adminSessionCookie(token) },
+    );
+  }
+  if (u.pathname === "/api/admin/auth/logout") {
+    const bad = method(req, ["POST"]);
+    if (bad) return bad;
+    const token = adminSessionToken(req.headers.get("cookie"));
+    if (token)
+      await env.DB.prepare("DELETE FROM admin_sessions WHERE token_hash=?")
+        .bind(await sessionHash(token))
+        .run();
+    return json({ authenticated: false }, 200, {
+      "set-cookie": clearAdminSessionCookie(),
+    });
+  }
+  if (u.pathname === "/api/admin/users") {
+    const identity = await admin(req, env);
+    if (!identity) return json({ error: "unauthorized" }, 401);
+    const bad = method(req, ["GET", "POST"]);
+    if (bad) return bad;
+    if (req.method === "GET") {
+      const users = await env.DB.prepare(
+        "SELECT id,username,role,active,created_at,last_login_at FROM admin_users ORDER BY username COLLATE NOCASE",
+      ).all();
+      return json({ users: users.results });
+    }
+    const input = (await body(req)) as {
+      username?: unknown;
+      password?: unknown;
+    };
+    const username = String(input.username || "");
+    const password = String(input.password || "");
+    if (!validAdminUsername(username))
+      return json({ error: "invalid_username" }, 400);
+    if (!validAdminPassword(password))
+      return json({ error: "invalid_password" }, 400);
+    const passwordRecord = await newPasswordRecord(password);
+    const now = Math.floor(Date.now() / 1000);
+    try {
+      const result = await env.DB.prepare(
+        "INSERT INTO admin_users(username,password_salt,password_hash,password_iterations,role,active,created_at,updated_at) VALUES(?,?,?,?,\u0027admin\u0027,1,?,?) RETURNING id",
+      )
+        .bind(
+          username,
+          passwordRecord.salt,
+          passwordRecord.hash,
+          passwordRecord.iterations,
+          now,
+          now,
+        )
+        .first<{ id: number }>();
+      console.log(
+        JSON.stringify({
+          event: "admin_user_created",
+          admin_user_id: result?.id,
+          actor_id: identity.id,
+        }),
+      );
+      return json({ id: result?.id, username, role: "admin", active: 1 }, 201);
+    } catch {
+      return json({ error: "username_exists" }, 409);
+    }
   }
   if (u.pathname === "/api/status" || u.pathname === "/status.json") {
     const bad = method(req, ["GET"]);
@@ -471,7 +708,7 @@ async function handle(req: Request, env: Env) {
     return new Response(req.method === "HEAD" ? null : o.body, { headers: h });
   }
   if (u.pathname === "/api/admin/policy") {
-    if (!admin(req, env)) return json({ error: "unauthorized" }, 401);
+    if (!(await admin(req, env))) return json({ error: "unauthorized" }, 401);
     const bad = method(req, ["GET", "PUT"]);
     if (bad) return bad;
     if (req.method === "GET") return json(await policy(env));
@@ -494,7 +731,7 @@ async function handle(req: Request, env: Env) {
     return json(p);
   }
   if (u.pathname === "/api/admin/generation") {
-    if (!admin(req, env)) return json({ error: "unauthorized" }, 401);
+    if (!(await admin(req, env))) return json({ error: "unauthorized" }, 401);
     const bad = method(req, ["GET", "PUT"]);
     if (bad) return bad;
     if (req.method === "GET") {
@@ -514,7 +751,7 @@ async function handle(req: Request, env: Env) {
     return json({ duration: generationDuration(x.duration) });
   }
   if (u.pathname === "/api/admin/queue") {
-    if (!admin(req, env)) return json({ error: "unauthorized" }, 401);
+    if (!(await admin(req, env))) return json({ error: "unauthorized" }, 401);
     const bad = method(req, ["GET"]);
     if (bad) return bad;
     const [messages, jobs] = await Promise.all([
@@ -528,7 +765,7 @@ async function handle(req: Request, env: Env) {
     return json({ messages: messages.results, jobs: jobs.results });
   }
   if (u.pathname === "/api/admin/clips") {
-    if (!admin(req, env)) return json({ error: "unauthorized" }, 401);
+    if (!(await admin(req, env))) return json({ error: "unauthorized" }, 401);
     const bad = method(req, ["GET"]);
     if (bad) return bad;
     const clips = await env.DB.prepare(
@@ -540,7 +777,7 @@ async function handle(req: Request, env: Env) {
     /^\/api\/admin\/jobs\/([A-Za-z0-9-]{8,80})\/provider-status$/,
   );
   if (providerStatus) {
-    if (!admin(req, env)) return json({ error: "unauthorized" }, 401);
+    if (!(await admin(req, env))) return json({ error: "unauthorized" }, 401);
     const bad = method(req, ["GET"]);
     if (bad) return bad;
     const job = await env.DB.prepare(
@@ -652,7 +889,7 @@ async function handle(req: Request, env: Env) {
     /^\/api\/admin\/messages\/(\d+)\/action$/,
   );
   if (messageAction) {
-    if (!admin(req, env)) return json({ error: "unauthorized" }, 401);
+    if (!(await admin(req, env))) return json({ error: "unauthorized" }, 401);
     const bad = method(req, ["POST"]);
     if (bad) return bad;
     const id = Number(messageAction[1]),
@@ -684,7 +921,7 @@ async function handle(req: Request, env: Env) {
   }
   const deleteMessage = u.pathname.match(/^\/api\/admin\/messages\/(\d+)$/);
   if (deleteMessage) {
-    if (!admin(req, env)) return json({ error: "unauthorized" }, 401);
+    if (!(await admin(req, env))) return json({ error: "unauthorized" }, 401);
     const bad = method(req, ["DELETE"]);
     if (bad) return bad;
     const id = Number(deleteMessage[1]),
@@ -729,7 +966,7 @@ async function handle(req: Request, env: Env) {
   }
   const clipAction = u.pathname.match(/^\/api\/admin\/clips\/(\d+)\/action$/);
   if (clipAction) {
-    if (!admin(req, env)) return json({ error: "unauthorized" }, 401);
+    if (!(await admin(req, env))) return json({ error: "unauthorized" }, 401);
     const bad = method(req, ["POST"]);
     if (bad) return bad;
     const id = Number(clipAction[1]),
@@ -831,7 +1068,7 @@ async function handle(req: Request, env: Env) {
   }
   const deleteClip = u.pathname.match(/^\/api\/admin\/clips\/(\d+)$/);
   if (deleteClip) {
-    if (!admin(req, env)) return json({ error: "unauthorized" }, 401);
+    if (!(await admin(req, env))) return json({ error: "unauthorized" }, 401);
     const bad = method(req, ["DELETE"]);
     if (bad) return bad;
     const id = Number(deleteClip[1]),
@@ -856,7 +1093,7 @@ async function handle(req: Request, env: Env) {
     return json({ deleted: true, id });
   }
   if (u.pathname === "/api/admin/integrations") {
-    if (!admin(req, env)) return json({ error: "unauthorized" }, 401);
+    if (!(await admin(req, env))) return json({ error: "unauthorized" }, 401);
     const bad = method(req, ["GET"]);
     if (bad) return bad;
     let stripe = "disabled";
@@ -897,7 +1134,7 @@ async function handle(req: Request, env: Env) {
     });
   }
   if (u.pathname === "/api/admin/pause" || u.pathname === "/api/admin/resume") {
-    if (!admin(req, env)) return json({ error: "unauthorized" }, 401);
+    if (!(await admin(req, env))) return json({ error: "unauthorized" }, 401);
     const bad = method(req, ["POST"]);
     if (bad) return bad;
     return station(env).fetch(
@@ -1165,8 +1402,8 @@ async function processWiroGeneration(
         ),
         credentials,
       );
-    } catch {
-      await failJob(env, x, "wiro_submit_failed");
+    } catch (error) {
+      await failJob(env, x, wiroErrorCode(error, "wiro_submit_failed"));
       msg.ack();
       return;
     }

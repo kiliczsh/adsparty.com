@@ -21,19 +21,40 @@
     <main>
       <section id="login" class="panel login">
         <p class="eyebrow">PROTECTED OPERATOR ACCESS</p>
-        <h1>Connect to the control room</h1>
-        <p>
-          The bearer token remains in this browser tab only. It is never placed
-          in a URL.
-        </p>
+        <h1>Sign in to the control room</h1>
+        <p>Only active administrator accounts can access station controls.</p>
         <form id="loginForm">
           <label
-            >ADMIN TOKEN<input
-              id="token"
+            >USERNAME<input
+              id="username"
+              type="text"
+              autocomplete="username"
+              minlength="3"
+              maxlength="32"
+              pattern="[A-Za-z0-9_-]+"
+              required /></label
+          ><label
+            >PASSWORD<input
+              id="password"
               type="password"
               autocomplete="current-password"
+              minlength="12"
+              maxlength="128"
               required /></label
-          ><button>CONNECT ▶</button>
+          ><button>SIGN IN ▶</button>
+        </form>
+        <form id="bootstrapForm" hidden>
+          <p class="note">
+            No administrator exists yet. Create the first account using the
+            server bootstrap token.
+          </p>
+          <label
+            >BOOTSTRAP TOKEN<input
+              id="bootstrapToken"
+              type="password"
+              autocomplete="off"
+              required /></label
+          ><button>CREATE FIRST ADMIN</button>
         </form>
         <p id="loginError" class="error" role="alert"></p>
       </section>
@@ -63,7 +84,6 @@
           <article>
             <span>VIDEO PROVIDER</span><b id="videoProviderState">—</b>
           </article>
-          <article><span>FAL VIDEO</span><b id="falState">—</b></article>
           <article><span>WIRO VIDEO</span><b id="wiroState">—</b></article>
           <article>
             <span>MEDIA PACKAGER</span><b id="packagerState">—</b>
@@ -164,6 +184,35 @@
             <span>Disable hides a video without deleting its media</span>
           </div>
           <ol id="clipQueue"></ol>
+        </section>
+
+        <section class="panel adminUsers">
+          <div class="panelTitle">
+            <h2>ADMIN USERS</h2>
+            <span id="signedInAs">SIGNED IN</span>
+          </div>
+          <form id="adminUserForm" class="adminUserForm">
+            <label
+              >USERNAME<input
+                id="newAdminUsername"
+                type="text"
+                autocomplete="off"
+                minlength="3"
+                maxlength="32"
+                pattern="[A-Za-z0-9_-]+"
+                required /></label
+            ><label
+              >TEMPORARY PASSWORD<input
+                id="newAdminPassword"
+                type="password"
+                autocomplete="new-password"
+                minlength="12"
+                maxlength="128"
+                required /></label
+            ><button>ADD ADMIN</button>
+          </form>
+          <p id="adminUserNote" class="note" role="status"></p>
+          <ol id="adminUsersList"></ol>
         </section>
 
         <section class="panel diagnostics">

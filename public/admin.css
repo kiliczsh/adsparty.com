@@ -7,7 +7,7 @@
   --strong: #3a404b;
   --text: #f3f4f6;
   --muted: #9298a3;
-  --accent: #e879cf;
+  --accent: #2e7d52;
   --green: #69d894;
   --amber: #e7b66b;
   --red: #ee7185;
@@ -106,6 +106,7 @@ label {
     monospace;
 }
 input[type="password"],
+input[type="text"],
 select {
   display: block;
   width: 100%;
@@ -117,6 +118,11 @@ select {
   background: var(--bg);
   color: var(--text);
   font-size: 15px;
+}
+.login form + form {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
 }
 input:focus,
 select:focus {
@@ -242,6 +248,40 @@ button.danger,
   display: grid;
   grid-template-columns: minmax(240px, 0.7fr) minmax(380px, 1.3fr);
   gap: 12px;
+}
+.adminUsers {
+  margin-top: 16px;
+  padding: 18px;
+}
+.adminUserForm {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 12px;
+  align-items: end;
+  margin-top: 16px;
+}
+.adminUserForm input {
+  margin-bottom: 0;
+}
+.adminUserForm button {
+  min-height: 39px;
+}
+#adminUsersList {
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
+}
+#adminUsersList li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+  color: var(--text);
+  font-size: 13px;
+}
+#adminUsersList small {
+  color: var(--muted);
 }
 .grid > .panel,
 .diagnostics {
@@ -375,6 +415,7 @@ button.danger,
     grid-template-columns: 1fr 1fr;
   }
   .grid,
+  .adminUserForm,
   .diagnostics dl {
     grid-template-columns: 1fr;
   }
