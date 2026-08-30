@@ -352,6 +352,9 @@ footer {
   font-size: 10px;
   border-top: 2px solid var(--pink);
   border-bottom: 0;
+  justify-content: center;
+  gap: 24px;
+  white-space: nowrap;
 }
 footer b {
   color: var(--hot);
