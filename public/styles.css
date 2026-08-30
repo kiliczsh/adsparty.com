@@ -81,11 +81,13 @@ h1 {
   font-size: 34px;
   box-shadow: 7px 7px #000;
 }
-#liveEdge {
+#playbackControl {
   position: absolute;
   z-index: 4;
   top: 18px;
   right: 18px;
+}
+#liveEdge {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -99,13 +101,81 @@ h1 {
   letter-spacing: 0.08em;
   cursor: pointer;
 }
-#liveEdge span {
+#liveEdge .modeDot {
   width: 10px;
   height: 10px;
   border-radius: 50%;
   background: #ff261c;
   box-shadow: 0 0 10px #ff261c;
   animation: rec-pulse 1.15s steps(2, end) infinite;
+}
+#liveEdge[data-mode="live"] {
+  border-color: #3cff86;
+  color: #73ffa7;
+}
+#liveEdge[data-mode="live"] .modeDot {
+  background: #26e870;
+  box-shadow: 0 0 10px #26e870;
+}
+#liveEdge[data-mode="rewind"] {
+  border-color: #ffb020;
+  color: #ffd166;
+}
+#liveEdge[data-mode="rewind"] .modeDot {
+  background: #ffb020;
+  box-shadow: 0 0 10px #ffb020;
+}
+#liveEdge .modeChevron {
+  width: auto;
+  height: auto;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  color: currentColor;
+  font-size: 10px;
+  animation: none;
+}
+#liveEdge[aria-expanded="true"] .modeChevron {
+  transform: rotate(180deg);
+}
+#playbackMenu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 230px;
+  padding: 5px;
+  border: 2px solid var(--pink);
+  background: #050505f2;
+  box-shadow: 6px 6px #000;
+}
+#playbackMenu[hidden] {
+  display: none;
+}
+#playbackMenu button {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  border: 0;
+  background: transparent;
+  color: var(--white);
+  text-align: left;
+  cursor: pointer;
+}
+#playbackMenu button:hover,
+#playbackMenu button:focus-visible,
+#playbackMenu button[aria-current="true"] {
+  background: var(--pink);
+  color: #000;
+  outline: none;
+}
+#playbackMenu b {
+  font: 900 14px monospace;
+}
+#playbackMenu small {
+  font: 11px/1.25 monospace;
 }
 #liveEdge:active {
   translate: 2px 2px;
@@ -120,7 +190,7 @@ h1 {
   color: #ffd166;
   cursor: wait;
 }
-#liveEdge.is-loading span {
+#liveEdge.is-loading .modeDot {
   background: #ffb020;
   box-shadow: 0 0 10px #ffb020;
   animation-duration: 0.45s;
@@ -468,7 +538,7 @@ body.fullscreen-view #onair,
 body.fullscreen-view #splash,
 body.fullscreen-view #mute,
 body.fullscreen-view #heart,
-body.fullscreen-view #liveEdge,
+body.fullscreen-view #playbackControl,
 body.fullscreen-view #chatToggle,
 body.fullscreen-view #language,
 body.fullscreen-view #props,
@@ -512,17 +582,22 @@ body.fullscreen-view #fullscreen {
   }
 }
 @media (max-width: 760px) {
-  #liveEdge {
+  #playbackControl {
     top: calc(10px + env(safe-area-inset-top));
     right: 10px;
+  }
+  #liveEdge {
     min-height: 32px;
     padding: 5px 9px;
     font-size: 12px;
     box-shadow: 3px 3px #000;
   }
-  #liveEdge span {
+  #liveEdge .modeDot {
     width: 8px;
     height: 8px;
+  }
+  #playbackMenu {
+    width: min(230px, calc(100vw - 20px));
   }
 }
 @supports (height: 100dvh) {

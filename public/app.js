@@ -24,6 +24,9 @@ const prefetchedMp4 = new Map();
 let directSwitchToken = 0,
   directCurrentClip = null,
   directQueue = [],
+  recordedClips = [],
+  recordedIndex = -1,
+  playbackMode = "live",
   pendingHls = false,
   directPreparing = false,
   directStallTimer = null,
@@ -45,6 +48,10 @@ const I18N = {
     mute: "Sesi aç veya kapat",
     heart: "Kalp gönder",
     liveEdge: "En güncel yayına dön",
+    playbackMenu: "Oynatma modu",
+    recHint: "Kayıtları sırayla döndür",
+    liveHint: "En yeni videoya git",
+    rewindHint: "3 video geriye git",
     fullscreenEnter: "Tam ekrana geç",
     fullscreenExit: "Tam ekrandan çık",
     chat: "SOHBET",
@@ -91,6 +98,10 @@ const I18N = {
     mute: "Mute or unmute",
     heart: "Send heart",
     liveEdge: "Return to the latest broadcast",
+    playbackMenu: "Playback mode",
+    recHint: "Loop recordings in order",
+    liveHint: "Go to the newest video",
+    rewindHint: "Go back 3 videos",
     fullscreenEnter: "Enter fullscreen",
     fullscreenExit: "Exit fullscreen",
     chat: "CHAT",
@@ -153,7 +164,10 @@ function applyLanguage(nextLanguage) {
   $("#splashHint").textContent = c.splashHint;
   $("#mute").setAttribute("aria-label", c.mute);
   $("#heart").setAttribute("aria-label", c.heart);
-  $("#liveEdge").setAttribute("aria-label", c.liveEdge);
+  $("#liveEdge").setAttribute("aria-label", c.playbackMenu);
+  $("#recHint").textContent = c.recHint;
+  $("#liveHint").textContent = c.liveHint;
+  $("#rewindHint").textContent = c.rewindHint;
   $("#chatTitle").textContent = c.chat;
   $("#chatSubtitle").textContent = c.direct;
   $("#usernameLabel").textContent = c.username;
@@ -186,7 +200,7 @@ function prefetchMp4(clips = [], preferredUrl = null) {
   if (
     target &&
     target !== video.currentSrc &&
-    /^https:\/\/[^/]+\.fal\.media\//i.test(target)
+    /^https:\/\/(?:[^/]+\.fal\.media|cdn\d*\.wiro\.ai)\//i.test(target)
   )
     warmMp4(target);
   for (const [url, warmup] of [...prefetchedMp4]) {
@@ -313,8 +327,35 @@ function queueDirect(c) {
   // Preserve FIFO order if playback falls behind the station clock.
   directQueue = directQueue.slice(0, 6);
 }
+function setPlaybackMode(mode) {
+  playbackMode = ["rec", "rewind"].includes(mode) ? mode : "live";
+  $("#liveEdge").dataset.mode = playbackMode;
+  $("#playbackMode").textContent = playbackMode.toUpperCase();
+  for (const option of document.querySelectorAll("[data-playback]"))
+    option.setAttribute(
+      "aria-current",
+      String(option.dataset.playback === playbackMode),
+    );
+}
+function setPlaybackMenu(open) {
+  $("#playbackMenu").hidden = !open;
+  $("#liveEdge").setAttribute("aria-expanded", String(open));
+}
+function nextRecordedClip() {
+  if (!recordedClips.length) return null;
+  recordedIndex = (recordedIndex + 1) % recordedClips.length;
+  return recordedClips[recordedIndex];
+}
 function advanceDirect() {
   if (directPreparing) return;
+  if (playbackMode !== "live") {
+    const recorded = nextRecordedClip();
+    if (recorded) {
+      prefetchMp4(recordedClips, recorded.mediaUrl);
+      playDirect(recorded, true);
+    }
+    return;
+  }
   const next = directQueue.shift();
   if (next) playDirect(next, true);
   else if (pendingHls) startPlayer();
@@ -340,7 +381,7 @@ function watchDirectStall() {
       directStallRetries = 0;
       const next = directQueue.shift();
       if (next) playDirect(next, true);
-      else startPlayer();
+      else advanceDirect();
       return;
     }
     directStallRetries++;
@@ -362,18 +403,18 @@ function watchDirectStall() {
   }, 8000);
 }
 async function playDirect(c, force = false) {
-  if (directSequence === c.sequence) return;
+  if (directSequence === c.sequence && !force) return true;
   if (
     !force &&
     (directPreparing || (directSequence !== null && !video.ended))
   ) {
     queueDirect(c);
-    return;
+    return false;
   }
   const switchToken = ++directSwitchToken;
   directPreparing = true;
   const prepared = await prepareDirectSource(c.mediaUrl);
-  if (directSwitchToken !== switchToken) return;
+  if (directSwitchToken !== switchToken) return false;
   directPreparing = false;
   if (!prepared) {
     queueDirect(c);
@@ -383,7 +424,7 @@ async function playDirect(c, force = false) {
         if (retry) playDirect(retry, true);
       }
     }, 1500);
-    return;
+    return false;
   }
   if (hls) {
     hls.destroy();
@@ -404,7 +445,7 @@ async function playDirect(c, force = false) {
     await new Promise((resolve) => setTimeout(resolve, 180));
   }
   if (directSequence !== sequence || directSwitchToken !== switchToken) {
-    return;
+    return false;
   }
   let revealed = false;
   const reveal = () => {
@@ -439,6 +480,7 @@ async function playDirect(c, force = false) {
     video.load();
     setTimeout(reveal, hasVisibleVideo ? 2500 : 8000);
   }
+  return true;
 }
 async function setSegment(seg, sequence = null) {
   if (
@@ -540,17 +582,21 @@ async function refreshMeta() {
         r.json(),
       ),
       latest = m.clips?.at(-1);
-    if (directSequence !== null) {
+    if (playbackMode === "live" && directSequence !== null) {
       const later = (m.clips || []).filter(
         (clip) => Number(clip.sequence) > directSequence,
       );
       for (const clip of later) if (clip.mediaUrl) queueDirect(clip);
       if (later.some((clip) => clip.filename)) pendingHls = true;
       if (video.ended) advanceDirect();
-    } else if (latest?.mediaUrl) {
+    } else if (playbackMode === "live" && latest?.mediaUrl) {
       playDirect(latest);
     }
-    prefetchMp4(m.clips);
+    if (playbackMode === "live") prefetchMp4(m.clips);
+    else if (recordedClips.length) {
+      const next = recordedClips[(recordedIndex + 1) % recordedClips.length];
+      prefetchMp4(recordedClips, next?.mediaUrl);
+    }
     let currentIndex =
       m.clips?.findIndex((x) => x.sequence === currentSequence) ?? -1;
     if (currentIndex < 0)
@@ -571,13 +617,15 @@ async function refreshMeta() {
       $("#airAge").textContent = c.replay ? relativeAge(c.generatedAt) : "";
       if (!c.replay) seenFresh.add(`${c.sequence}:${c.filename || c.mediaUrl}`);
     }
-    const later = m.clips
-      ?.slice(currentIndex + 1)
-      .find(
-        (x) =>
-          !x.replay &&
-          !seenFresh.has(`${x.sequence}:${x.filename || x.mediaUrl}`),
-      );
+    const later =
+      playbackMode === "live" &&
+      m.clips
+        ?.slice(currentIndex + 1)
+        .find(
+          (x) =>
+            !x.replay &&
+            !seenFresh.has(`${x.sequence}:${x.filename || x.mediaUrl}`),
+        );
     if (later?.mediaUrl) playDirect(later);
     else if (later && hls) {
       const archived = m.clips.filter((x) => x.filename),
@@ -615,13 +663,17 @@ async function goToLiveEdge() {
       (response) => response.json(),
     );
     const liveTail = meta.clips || [];
-    const target = liveTail[0];
+    const target = liveTail.at(-1);
     if (!target) return;
+    setPlaybackMode("live");
+    recordedClips = [];
+    recordedIndex = -1;
     if (target.mediaUrl) {
-      directQueue = liveTail.slice(1).filter((clip) => clip.mediaUrl);
-      pendingHls = liveTail.slice(1).some((clip) => clip.filename);
-      prefetchMp4(liveTail, directQueue[0]?.mediaUrl || target.mediaUrl);
-      await playDirect(target, true);
+      directQueue = [];
+      pendingHls = false;
+      prefetchMp4(liveTail, target.mediaUrl);
+      if (!(await playDirect(target, true)))
+        throw new Error("live_edge_playback_failed");
     } else if (target.filename) {
       if (!(await preloadLiveSegment(target.filename)))
         throw new Error("live_edge_preload_failed");
@@ -630,6 +682,42 @@ async function goToLiveEdge() {
     } else {
       throw new Error("live_edge_unavailable");
     }
+    button.classList.add("live-edge-confirmed");
+    setTimeout(() => button.classList.remove("live-edge-confirmed"), 500);
+  } catch {
+    button.classList.add("live-edge-error");
+    setTimeout(() => button.classList.remove("live-edge-error"), 1200);
+  } finally {
+    setLiveEdgeBusy(false);
+  }
+}
+async function startRecorded(mode) {
+  if (liveEdgeBusy) return;
+  setLiveEdgeBusy(true);
+  const button = $("#liveEdge");
+  button.classList.remove("live-edge-error", "live-edge-confirmed");
+  try {
+    const meta = await fetch("/live/archive.json", { cache: "no-store" }).then(
+      (response) => response.json(),
+    );
+    const clips = (meta.clips || []).filter((clip) => clip.mediaUrl);
+    if (!clips.length) throw new Error("recordings_unavailable");
+    recordedClips = clips;
+    const current = clips.findIndex(
+      (clip) => Number(clip.clipId) === Number(currentClipId),
+    );
+    recordedIndex =
+      mode === "rewind"
+        ? Math.max(0, (current >= 0 ? current : clips.length - 1) - 3)
+        : 0;
+    setPlaybackMode(mode);
+    directQueue = [];
+    pendingHls = false;
+    const target = recordedClips[recordedIndex];
+    const next = recordedClips[(recordedIndex + 1) % recordedClips.length];
+    prefetchMp4(recordedClips, next?.mediaUrl || target.mediaUrl);
+    if (!(await playDirect(target, true)))
+      throw new Error("recording_playback_failed");
     button.classList.add("live-edge-confirmed");
     setTimeout(() => button.classList.remove("live-edge-confirmed"), 500);
   } catch {
@@ -787,10 +875,26 @@ $("#heart").addEventListener("click", (e) => {
   e.stopPropagation();
   sendLike();
 });
-$("#liveEdge").addEventListener("pointerdown", (e) => e.stopPropagation());
+$("#playbackControl").addEventListener("pointerdown", (e) =>
+  e.stopPropagation(),
+);
 $("#liveEdge").addEventListener("click", (e) => {
   e.stopPropagation();
-  goToLiveEdge();
+  setPlaybackMenu($("#playbackMenu").hidden);
+});
+$("#playbackMenu").addEventListener("click", (e) => {
+  const option = e.target.closest("[data-playback]");
+  if (!option) return;
+  e.stopPropagation();
+  setPlaybackMenu(false);
+  if (option.dataset.playback === "live") goToLiveEdge();
+  else startRecorded(option.dataset.playback);
+});
+document.addEventListener("click", (e) => {
+  if (!e.target.closest("#playbackControl")) setPlaybackMenu(false);
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") setPlaybackMenu(false);
 });
 function enter() {
   video.muted = false;
@@ -824,6 +928,7 @@ function setChatCollapsed(collapsed) {
   $("#chatToggle").textContent = `${copy().chat} ${collapsed ? "▲" : "▼"}`;
 }
 setChatCollapsed(matchMedia("(max-width:760px)").matches);
+setPlaybackMode("live");
 applyLanguage(language);
 $("#language").addEventListener("change", (e) => {
   applyLanguage(e.currentTarget.value);

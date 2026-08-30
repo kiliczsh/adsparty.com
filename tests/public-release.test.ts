@@ -62,13 +62,29 @@ describe("public release contract", () => {
     expect(app).toContain("Number(clip.sequence) > directSequence");
   });
 
-  it("returns to the latest three playable clips instead of full history", () => {
+  it("opens the newest live clip and exposes a bounded chronological archive", () => {
     const app = read("public/app.js");
     const worker = read("src/worker.ts");
     const station = read("src/station-do.ts");
     expect(app).toContain('fetch("/live/latest.json"');
+    expect(app).toContain("const target = liveTail.at(-1)");
+    expect(app).toContain('fetch("/live/archive.json"');
     expect(worker).toContain('u.pathname === "/live/latest.json"');
+    expect(worker).toContain('u.pathname === "/live/archive.json"');
     expect(station).toContain("ORDER BY c.generated_at DESC,c.id DESC LIMIT 3");
-    expect(station).toContain("old = liveTail.results.at(-1) || null");
+    expect(station).toContain(
+      "ORDER BY c.generated_at DESC,c.id DESC LIMIT 30",
+    );
+  });
+
+  it("offers live, recorded loop, and three-video rewind modes", () => {
+    const app = read("public/app.js");
+    const page = read("public/index.html");
+    expect(page).toContain('data-playback="rec"');
+    expect(page).toContain('data-playback="live"');
+    expect(page).toContain('data-playback="rewind"');
+    expect(app).toContain('playbackMode !== "live"');
+    expect(app).toContain("% recordedClips.length");
+    expect(app).toContain("current : clips.length - 1) - 3");
   });
 });

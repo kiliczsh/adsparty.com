@@ -393,9 +393,30 @@ export class Station extends DurableObject<Env> {
             sequence: s.mediaSequence - (chronological.length - 1 - index),
             clipId: x.id,
             filename: x.segment_filename || null,
-            mediaUrl: x.segment_filename ? undefined : x.media_url,
+            mediaUrl: x.media_url || undefined,
             duration: Number(x.duration) || 5,
             replay: Boolean(x.first_aired_at),
+            chatText: publicAttribution(x.chat_text),
+            generatedAt: x.generated_at,
+          })),
+        },
+        { headers: { "cache-control": "no-store" } },
+      );
+    }
+    if (u.pathname === "/archive") {
+      const archive = await this.env.DB.prepare(
+        "SELECT c.id,c.segment_filename,c.duration,c.chat_text,c.generated_at,src.value media_url FROM clips c JOIN settings src ON src.key='clip_source:'||c.id WHERE src.value IS NOT NULL ORDER BY c.generated_at DESC,c.id DESC LIMIT 30",
+      ).all<any>();
+      const chronological = [...archive.results].reverse();
+      return Response.json(
+        {
+          clips: chronological.map((x) => ({
+            sequence: x.id,
+            clipId: x.id,
+            filename: x.segment_filename || null,
+            mediaUrl: x.media_url,
+            duration: Number(x.duration) || 5,
+            replay: true,
             chatText: publicAttribution(x.chat_text),
             generatedAt: x.generated_at,
           })),

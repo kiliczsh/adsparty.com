@@ -27,9 +27,29 @@
         <video id="video" muted autoplay playsinline></video>
         <div class="noise"></div>
         <header><h1 id="brand"></h1></header>
-        <button id="liveEdge" type="button" aria-label="En güncel yayına dön">
-          <span aria-hidden="true"></span>REC
-        </button>
+        <div id="playbackControl">
+          <button
+            id="liveEdge"
+            type="button"
+            aria-haspopup="menu"
+            aria-expanded="false"
+            aria-controls="playbackMenu"
+          >
+            <span class="modeDot" aria-hidden="true"></span
+            ><b id="playbackMode">LIVE</b><span class="modeChevron">▼</span>
+          </button>
+          <div id="playbackMenu" role="menu" hidden>
+            <button type="button" role="menuitem" data-playback="rec">
+              <b>REC</b><small id="recHint">Kayıtları sırayla döndür</small>
+            </button>
+            <button type="button" role="menuitem" data-playback="live">
+              <b>LIVE</b><small id="liveHint">En yeni videoya git</small>
+            </button>
+            <button type="button" role="menuitem" data-playback="rewind">
+              <b>REWIND</b><small id="rewindHint">3 video geriye git</small>
+            </button>
+          </div>
+        </div>
         <aside id="onair">
           <strong id="onairLabel">YAYINDA</strong><b id="liveMode">CANLI</b
           ><span id="onairText">kanal hazırlanıyor</span

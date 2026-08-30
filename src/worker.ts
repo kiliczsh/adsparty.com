@@ -351,6 +351,11 @@ async function handle(req: Request, env: Env) {
     if (bad) return bad;
     return station(env).fetch("https://station/latest");
   }
+  if (u.pathname === "/live/archive.json") {
+    const bad = method(req, ["GET"]);
+    if (bad) return bad;
+    return station(env).fetch("https://station/archive");
+  }
   if (/^\/live\/\d{6}\.ts$/.test(u.pathname)) {
     if (req.method !== "GET" && req.method !== "HEAD")
       return method(req, ["GET", "HEAD"])!;
