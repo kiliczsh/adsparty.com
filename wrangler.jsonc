@@ -75,7 +75,7 @@
     "VIDEO_PROVIDER": "wiro",
     "WIRO_RESOLUTION": "480P",
     "WIRO_RATIO": "16:9",
-    "WIRO_SEED": "per-job",
+    "WIRO_SEED": "1000",
     "DIRECTOR_PROVIDER": "deterministic",
     "DIRECTOR_MODEL": "",
     "DIRECTOR_BASE_URL": "",
