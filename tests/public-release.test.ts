@@ -49,10 +49,12 @@ describe("public release contract", () => {
 
   it("links the Wiro FastH3 integration from the viewer footer", () => {
     const page = read("public/index.html");
+    const worker = read("src/worker.ts");
     expect(page).toContain(
       "https://wiro.ai/models/fastvideo/fast-h3?utm_source=adsparty.com",
     );
     expect(page).toMatch(/>wiro<\/a/);
+    expect(worker).toContain("https://*.wiro.ai");
   });
 
   it("keeps direct MP4 replay playback FIFO", () => {

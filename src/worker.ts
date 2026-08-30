@@ -107,7 +107,7 @@ function secureHeaders(h: Headers) {
   h.set("x-frame-options", "DENY");
   h.set(
     "content-security-policy",
-    "default-src 'self'; media-src 'self' blob: https://*.fal.media; script-src 'self' https://cdn.jsdelivr.net https://challenges.cloudflare.com https://www.googletagmanager.com; worker-src 'self' blob:; frame-src https://challenges.cloudflare.com; connect-src 'self' https://*.fal.media https://challenges.cloudflare.com https://cdn.jsdelivr.net https://www.google-analytics.com https://region1.google-analytics.com; style-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+    "default-src 'self'; media-src 'self' blob: https://*.fal.media https://*.wiro.ai; script-src 'self' https://cdn.jsdelivr.net https://challenges.cloudflare.com https://www.googletagmanager.com; worker-src 'self' blob:; frame-src https://challenges.cloudflare.com; connect-src 'self' https://*.fal.media https://*.wiro.ai https://challenges.cloudflare.com https://cdn.jsdelivr.net https://www.google-analytics.com https://region1.google-analytics.com; style-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
   );
 }
 function finalize(req: Request, r: Response) {
