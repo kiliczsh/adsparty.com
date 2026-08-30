@@ -41,6 +41,29 @@ const json = (data: unknown, status = 200, headers: HeadersInit = {}) =>
     headers: { ...JSON_HEADERS, ...headers },
   });
 const station = (env: Env) => env.STATION.getByName("live");
+async function broadcast(env: Env, event: unknown) {
+  try {
+    const response = await station(env).fetch("https://station/broadcast", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(event),
+    });
+    if (!response.ok)
+      console.error(
+        JSON.stringify({
+          event: "realtime_broadcast_failed",
+          status: response.status,
+        }),
+      );
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        event: "realtime_broadcast_failed",
+        error: String(error).slice(0, 160),
+      }),
+    );
+  }
+}
 const method = (req: Request, allowed: string[]) =>
   allowed.includes(req.method)
     ? null
@@ -245,6 +268,16 @@ async function chat(req: Request, env: Env) {
       code: rejection || undefined,
     }),
   );
+  await broadcast(env, {
+    type: "chat:new",
+    message: {
+      id: result.id,
+      user: x.user,
+      msg,
+      created_at: now,
+      status,
+    },
+  });
   return json({ id: result.id, status }, 201, {
     "set-cookie": viewerCookie(v.token),
   });
@@ -299,11 +332,43 @@ async function likes(req: Request, env: Env) {
   )
     .bind(clip.id, clip.id)
     .first<number>("n");
+  if (req.method === "POST")
+    await broadcast(env, {
+      type: "like:update",
+      clipId: Number(clip.id),
+      likes: n || 0,
+    });
   return json(
     { likes: n || 0 },
     200,
     req.method === "POST" ? { "set-cookie": viewerCookie(v.token) } : {},
   );
+}
+async function realtime(req: Request, env: Env) {
+  const bad = method(req, ["GET"]);
+  if (bad) return bad;
+  if (req.headers.get("upgrade")?.toLowerCase() !== "websocket")
+    return json({ error: "websocket_upgrade_required" }, 426, {
+      upgrade: "websocket",
+    });
+  const v = await viewer(req, env);
+  const upstream = await station(env).fetch(
+    new Request("https://station/ws", {
+      method: "GET",
+      headers: {
+        upgrade: "websocket",
+        "x-viewer-id": v.id,
+      },
+    }),
+  );
+  if (upstream.status !== 101 || !upstream.webSocket) return upstream;
+  const headers = new Headers();
+  if (v.fresh) headers.set("set-cookie", viewerCookie(v.token));
+  return new Response(null, {
+    status: 101,
+    webSocket: upstream.webSocket,
+    headers,
+  });
 }
 function admin(req: Request, env: Env) {
   return validAdminBearer(req.headers.get("authorization"), env.ADMIN_TOKEN);
@@ -326,6 +391,7 @@ async function handle(req: Request, env: Env) {
   }
   if (u.pathname === "/api/chat") return chat(req, env);
   if (u.pathname === "/api/like") return likes(req, env);
+  if (u.pathname === "/api/ws") return realtime(req, env);
   if (u.pathname === "/api/bible") {
     const bad = method(req, ["GET"]);
     if (bad) return bad;
@@ -1469,7 +1535,8 @@ async function failJob(env: Env, x: GenerationMessage, error: string) {
 export default {
   async fetch(req: Request, env: Env) {
     try {
-      return finalize(req, await handle(req, env));
+      const response = await handle(req, env);
+      return response.status === 101 ? response : finalize(req, response);
     } catch (e) {
       if (e instanceof Response) return finalize(req, e);
       console.error(

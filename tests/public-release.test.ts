@@ -120,4 +120,21 @@ describe("public release contract", () => {
     );
     expect(station).not.toContain("liveTail.results.at(-1)");
   });
+
+  it("uses one hibernatable station socket with REST fallback", () => {
+    const app = read("public/app.js");
+    const worker = read("src/worker.ts");
+    const station = read("src/station-do.ts");
+    expect(worker).toContain('u.pathname === "/api/ws"');
+    expect(worker).toContain("response.status === 101");
+    expect(station).toContain("this.ctx.acceptWebSocket");
+    expect(station).toContain("serializeAttachment");
+    expect(station).toContain("async webSocketMessage");
+    expect(station).toContain("now - attachment.lastSyncAt < 2_000");
+    expect(station).toContain('type: "chat:states"');
+    expect(app).toContain("new WebSocket");
+    expect(app).toContain("scheduleRealtimeFallback(5_000)");
+    expect(app).not.toContain("setTimeout(pollChat, 2500)");
+    expect(app).not.toContain("setInterval(refreshLikes, 3000)");
+  });
 });

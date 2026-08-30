@@ -25,6 +25,20 @@ type Entry = {
   chatText: string;
   generatedAt: number;
 };
+type SocketAttachment = { viewerId: string; lastSyncAt: number };
+type PublicEvent =
+  | {
+      type: "chat:new";
+      message: {
+        id: number;
+        user: string;
+        msg: string;
+        created_at: number;
+        status: string;
+      };
+    }
+  | { type: "like:update"; clipId: number; likes: number }
+  | { type: "viewers:update"; viewers: number };
 type State = {
   mediaSequence: number;
   window: Entry[];
@@ -81,6 +95,78 @@ export class Station extends DurableObject<Env> {
   }
   private async save(s: State) {
     await this.ctx.storage.put("state", s);
+  }
+  private socketViewerIds(exclude?: WebSocket) {
+    const viewers = new Set<string>();
+    for (const socket of this.ctx.getWebSockets()) {
+      if (socket === exclude) continue;
+      const attachment =
+        socket.deserializeAttachment() as SocketAttachment | null;
+      if (attachment?.viewerId) viewers.add(attachment.viewerId);
+    }
+    return viewers;
+  }
+  private viewerCount(s: State, exclude?: WebSocket) {
+    return new Set([
+      ...Object.keys(s.viewers),
+      ...this.socketViewerIds(exclude),
+    ]).size;
+  }
+  private send(socket: WebSocket, event: unknown) {
+    try {
+      socket.send(JSON.stringify(event));
+    } catch {
+      // A closing socket is removed by the runtime; one failed fan-out must not
+      // interrupt the station clock or delivery to the remaining viewers.
+    }
+  }
+  private broadcast(event: unknown) {
+    for (const socket of this.ctx.getWebSockets()) this.send(socket, event);
+  }
+  private async sendChatSnapshot(
+    socket?: WebSocket,
+    since = 0,
+    mine: number[] = [],
+  ) {
+    const query = since
+      ? "SELECT id,user,msg,created_at,status FROM messages WHERE id>? ORDER BY id LIMIT 50"
+      : "SELECT * FROM (SELECT id,user,msg,created_at,status FROM messages ORDER BY id DESC LIMIT 50) ORDER BY id";
+    const messages = await this.env.DB.prepare(query)
+      .bind(...(since ? [since] : []))
+      .all();
+    let states: null | Record<string, string> = null;
+    if (mine.length) {
+      const rows = await this.env.DB.prepare(
+        `SELECT id,status FROM messages WHERE id IN (${mine.map(() => "?").join(",")})`,
+      )
+        .bind(...mine)
+        .all<{ id: number; status: string }>();
+      states = Object.fromEntries(
+        rows.results.map((row) => [String(row.id), row.status]),
+      );
+    }
+    const s = await this.state();
+    const event = {
+      type: "chat:sync",
+      msgs: messages.results,
+      mine: states,
+      viewers: this.viewerCount(s),
+    };
+    if (socket) this.send(socket, event);
+    else this.broadcast(event);
+  }
+  private async broadcastChatStates() {
+    const rows = await this.env.DB.prepare(
+      "SELECT id,status FROM messages WHERE status IN ('queued','seen','generating','ready') OR id IN (SELECT id FROM messages ORDER BY id DESC LIMIT 50) ORDER BY id DESC LIMIT 100",
+    ).all<{ id: number; status: string }>();
+    const s = await this.state();
+    this.broadcast({
+      type: "chat:states",
+      states: Object.fromEntries(
+        rows.results.map((row) => [String(row.id), row.status]),
+      ),
+      viewers: this.viewerCount(s),
+    });
   }
   async alarm() {
     try {
@@ -360,6 +446,18 @@ export class Station extends DurableObject<Env> {
       ),
     );
     await this.save(s);
+    if (this.ctx.getWebSockets().length) {
+      try {
+        await this.broadcastChatStates();
+      } catch (error) {
+        console.error(
+          JSON.stringify({
+            event: "realtime_snapshot_failed",
+            error: String(error).slice(0, 160),
+          }),
+        );
+      }
+    }
   }
   async fetch(req: Request) {
     const u = new URL(req.url);
@@ -368,6 +466,42 @@ export class Station extends DurableObject<Env> {
     if (viewer) {
       s.viewers[viewer] = Math.floor(Date.now() / 1000);
       await this.save(s);
+    }
+    if (u.pathname === "/ws") {
+      if (req.method !== "GET")
+        return new Response("Method Not Allowed", {
+          status: 405,
+          headers: { allow: "GET" },
+        });
+      if (req.headers.get("upgrade")?.toLowerCase() !== "websocket")
+        return new Response("WebSocket upgrade required", { status: 426 });
+      if (!viewer) return new Response("Missing viewer", { status: 401 });
+      const pair = new WebSocketPair();
+      const [client, server] = Object.values(pair);
+      server.serializeAttachment({
+        viewerId: viewer,
+        lastSyncAt: 0,
+      } satisfies SocketAttachment);
+      this.ctx.acceptWebSocket(server, ["viewer"]);
+      this.send(server, {
+        type: "connected",
+        viewers: this.viewerCount(s),
+      });
+      this.broadcast({
+        type: "viewers:update",
+        viewers: this.viewerCount(s),
+      } satisfies PublicEvent);
+      return new Response(null, { status: 101, webSocket: client });
+    }
+    if (u.pathname === "/broadcast" && req.method === "POST") {
+      const event = await req.json<PublicEvent>();
+      if (
+        !event ||
+        !["chat:new", "like:update"].includes(String(event.type || ""))
+      )
+        return Response.json({ error: "invalid_event" }, { status: 400 });
+      this.broadcast(event);
+      return Response.json({ delivered: this.ctx.getWebSockets().length });
     }
     if (u.pathname === "/rate") {
       const key = `rl:${u.searchParams.get("key") || "anon"}`;
@@ -570,8 +704,8 @@ export class Station extends DurableObject<Env> {
       {
         live: !s.paused,
         paused: s.paused,
-        viewers_active: Object.keys(s.viewers).length > 0,
-        viewers: Object.keys(s.viewers).length,
+        viewers_active: this.viewerCount(s) > 0,
+        viewers: this.viewerCount(s),
         now_playing: now?.filename || null,
         now_generated_at: now?.generatedAt || null,
         now_replay: now?.replay || false,
@@ -591,5 +725,58 @@ export class Station extends DurableObject<Env> {
       },
       { headers: { "cache-control": "no-store" } },
     );
+  }
+  async webSocketMessage(socket: WebSocket, message: ArrayBuffer | string) {
+    if (typeof message !== "string" || message.length > 2_048) return;
+    try {
+      const input = JSON.parse(message) as {
+        type?: string;
+        since?: unknown;
+        mine?: unknown;
+      };
+      if (input.type !== "sync") return;
+      const attachment =
+        socket.deserializeAttachment() as SocketAttachment | null;
+      const now = Date.now();
+      if (attachment && now - attachment.lastSyncAt < 2_000) return;
+      if (attachment)
+        socket.serializeAttachment({ ...attachment, lastSyncAt: now });
+      const since =
+        typeof input.since === "number" &&
+        Number.isSafeInteger(input.since) &&
+        input.since >= 0
+          ? input.since
+          : 0;
+      const mine = Array.isArray(input.mine)
+        ? input.mine
+            .filter(
+              (id): id is number =>
+                typeof id === "number" && Number.isSafeInteger(id) && id > 0,
+            )
+            .slice(-50)
+        : [];
+      await this.sendChatSnapshot(socket, since, mine);
+    } catch {
+      this.send(socket, { type: "error", error: "invalid_message" });
+    }
+  }
+  async webSocketClose(socket: WebSocket) {
+    const attachment =
+      socket.deserializeAttachment() as SocketAttachment | null;
+    const s = await this.state();
+    if (
+      attachment?.viewerId &&
+      ![...this.socketViewerIds(socket)].includes(attachment.viewerId)
+    ) {
+      delete s.viewers[attachment.viewerId];
+      await this.save(s);
+    }
+    this.broadcast({
+      type: "viewers:update",
+      viewers: this.viewerCount(s, socket),
+    } satisfies PublicEvent);
+  }
+  async webSocketError(socket: WebSocket) {
+    await this.webSocketClose(socket);
   }
 }

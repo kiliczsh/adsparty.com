@@ -32,7 +32,11 @@ let directSwitchToken = 0,
   directStallTimer = null,
   directStallRetries = 0,
   pendingLiveEdgeSegment = null,
-  liveEdgeBusy = false;
+  liveEdgeBusy = false,
+  realtime = null,
+  realtimeReconnectTimer = null,
+  realtimeFallbackTimer = null,
+  realtimeAttempts = 0;
 const I18N = {
   tr: {
     title: "Sonsuz televizyon",
@@ -573,40 +577,122 @@ function addBubble(x, optimistic = false) {
   while (messages.children.length > 80) messages.firstChild.remove();
   messages.scrollTop = messages.scrollHeight;
 }
-async function pollChat() {
+function trackedMessageIds() {
+  const activeIds = [...messages.querySelectorAll(".bubble i[data-status]")]
+    .filter(
+      (state) =>
+        !["aired", "failed", "rejected"].includes(state.dataset.status),
+    )
+    .map((state) => state.closest(".bubble")?.dataset.id)
+    .filter((id) => /^\d+$/.test(id || ""))
+    .map(Number);
+  return [...new Set([...mine, ...activeIds])].slice(-50);
+}
+function applyChatSync(payload) {
+  for (const message of payload.msgs || []) {
+    addBubble(message);
+    since = Math.max(since, Number(message.id) || 0);
+  }
+  if (payload.mine)
+    for (const [id, status] of Object.entries(payload.mine)) {
+      const element = document.querySelector(`[data-id="${id}"]`);
+      if (element) {
+        element.className = `bubble ${status}`;
+        const state = element.querySelector("i");
+        state.dataset.status = status;
+        state.textContent = statusLabel(status);
+      }
+      if (["aired", "failed", "rejected"].includes(status))
+        mine.delete(Number(id));
+    }
+  if (Number.isFinite(Number(payload.viewers))) {
+    lastViewerCount = Number(payload.viewers);
+    $("#viewers").textContent = copy().viewer(lastViewerCount);
+  }
+}
+async function syncChat() {
   try {
-    const activeIds = [...messages.querySelectorAll(".bubble i[data-status]")]
-      .filter(
-        (state) =>
-          !["aired", "failed", "rejected"].includes(state.dataset.status),
-      )
-      .map((state) => state.closest(".bubble")?.dataset.id)
-      .filter((id) => /^\d+$/.test(id || ""));
-    const ids = [...new Set([...mine, ...activeIds])].slice(-50).join(",");
+    const ids = trackedMessageIds().join(",");
     const r = await fetch(`/api/chat?since=${since}&mine=${ids}`, {
       cache: "no-store",
     });
-    const j = await r.json();
-    for (const x of j.msgs) {
-      addBubble(x);
-      since = Math.max(since, x.id);
-    }
-    if (j.mine)
-      for (const [id, status] of Object.entries(j.mine)) {
-        const e = document.querySelector(`[data-id="${id}"]`);
-        if (e) {
-          e.className = `bubble ${status}`;
-          const state = e.querySelector("i");
-          state.dataset.status = status;
-          state.textContent = statusLabel(status);
-        }
-        if (["aired", "failed", "rejected"].includes(status))
-          mine.delete(Number(id));
-      }
-    lastViewerCount = Number(j.viewers) || 0;
-    $("#viewers").textContent = copy().viewer(lastViewerCount);
+    if (r.ok) applyChatSync(await r.json());
   } catch {}
-  setTimeout(pollChat, 2500);
+}
+function realtimeOpen() {
+  return realtime?.readyState === WebSocket.OPEN;
+}
+function scheduleRealtimeFallback(delay = 1_000) {
+  if (realtimeFallbackTimer !== null) return;
+  realtimeFallbackTimer = setTimeout(async () => {
+    realtimeFallbackTimer = null;
+    if (realtimeOpen()) return;
+    await Promise.all([syncChat(), refreshLikes()]);
+    scheduleRealtimeFallback(5_000);
+  }, delay);
+}
+function scheduleRealtimeReconnect() {
+  clearTimeout(realtimeReconnectTimer);
+  const delay = Math.min(15_000, 750 * 2 ** realtimeAttempts);
+  realtimeAttempts = Math.min(realtimeAttempts + 1, 5);
+  realtimeReconnectTimer = setTimeout(connectRealtime, delay);
+}
+function handleRealtime(event) {
+  if (!event || typeof event.type !== "string") return;
+  if (event.type === "connected" || event.type === "viewers:update") {
+    applyChatSync({ viewers: event.viewers });
+    return;
+  }
+  if (event.type === "chat:new") {
+    applyChatSync({ msgs: [event.message], viewers: event.viewers });
+    return;
+  }
+  if (event.type === "chat:sync") {
+    applyChatSync(event);
+    return;
+  }
+  if (event.type === "chat:states") {
+    applyChatSync({ mine: event.states, viewers: event.viewers });
+    return;
+  }
+  if (
+    event.type === "like:update" &&
+    Number(event.clipId) === Number(currentClipId)
+  )
+    applyRemoteLikes(event.likes);
+}
+function connectRealtime() {
+  if (
+    realtime?.readyState === WebSocket.OPEN ||
+    realtime?.readyState === WebSocket.CONNECTING
+  )
+    return;
+  const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+  const socket = new WebSocket(`${protocol}//${location.host}/api/ws`);
+  realtime = socket;
+  socket.addEventListener("open", () => {
+    if (realtime !== socket) return;
+    realtimeAttempts = 0;
+    clearTimeout(realtimeFallbackTimer);
+    realtimeFallbackTimer = null;
+    socket.send(
+      JSON.stringify({ type: "sync", since, mine: trackedMessageIds() }),
+    );
+    refreshLikes();
+  });
+  socket.addEventListener("message", (message) => {
+    if (realtime !== socket || typeof message.data !== "string") return;
+    try {
+      handleRealtime(JSON.parse(message.data));
+    } catch {}
+  });
+  socket.addEventListener("close", () => {
+    if (realtime !== socket) return;
+    realtime = null;
+    scheduleRealtimeFallback();
+    if (navigator.onLine) scheduleRealtimeReconnect();
+  });
+  socket.addEventListener("error", () => socket.close());
 }
 function relativeAge(ts) {
   const seconds = Math.max(1, Math.floor(Date.now() / 1000 - Number(ts || 0)));
@@ -809,6 +895,7 @@ function setLikeClip(clipId) {
   currentClipId = next;
   lastRemoteLikes = 0;
   $("#likes").textContent = "0";
+  refreshLikes();
 }
 function likeTarget() {
   if (currentClipId)
@@ -840,6 +927,22 @@ async function sendLike() {
     })
     .catch(() => {});
 }
+function applyRemoteLikes(value) {
+  const likes = Number(value);
+  if (!Number.isFinite(likes) || likes < 0) return;
+  const displayed = Number($("#likes").textContent) || 0;
+  const diff = Math.min(
+    5,
+    Math.max(0, likes - Math.max(lastRemoteLikes, displayed)),
+  );
+  for (let i = 0; i < diff; i++)
+    setTimeout(
+      () => heart(innerWidth * 0.65 + Math.random() * 80, innerHeight * 0.7),
+      i * 120,
+    );
+  lastRemoteLikes = likes;
+  $("#likes").textContent = String(likes);
+}
 async function refreshLikes() {
   const target = likeTarget();
   if (!target) return;
@@ -847,14 +950,7 @@ async function refreshLikes() {
     const j = await fetch(`/api/like?${target.query}`, {
       cache: "no-store",
     }).then((r) => r.json());
-    const diff = Math.min(5, Math.max(0, j.likes - lastRemoteLikes));
-    for (let i = 0; i < diff; i++)
-      setTimeout(
-        () => heart(innerWidth * 0.65 + Math.random() * 80, innerHeight * 0.7),
-        i * 120,
-      );
-    lastRemoteLikes = j.likes;
-    $("#likes").textContent = j.likes;
+    applyRemoteLikes(j.likes);
   } catch {}
 }
 function seekIndex(delta) {
@@ -1140,7 +1236,12 @@ fetch("/api/config")
     }
   });
 startPlayer();
-pollChat();
+syncChat();
+connectRealtime();
 refreshMeta();
 setInterval(refreshMeta, 3000);
-setInterval(refreshLikes, 3000);
+window.addEventListener("online", connectRealtime);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && !realtimeOpen())
+    connectRealtime();
+});
