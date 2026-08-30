@@ -1,7 +1,7 @@
 import http from "node:http";
 import { spawn } from "node:child_process";
 import { timingSafeEqual } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { createWriteStream, createReadStream } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -230,8 +230,10 @@ export const server = http.createServer(async (req, res) => {
     )
       throw new Error("invalid request");
     work = await packageVideo(x.source_url, x.generation_id);
+    const packaged = await stat(work.output);
     res.writeHead(200, {
       "content-type": "video/mp2t",
+      "content-length": String(packaged.size),
       "x-media-duration": String(work.duration),
       "x-media-mode": work.metrics.mode,
       "x-media-total-ms": String(work.metrics.totalMs),
@@ -240,7 +242,13 @@ export const server = http.createServer(async (req, res) => {
       "cache-control": "no-store",
     });
     await pipeline(createReadStream(work.output), res);
-  } catch {
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        event: "package_failed",
+        error: String(error).slice(0, 200),
+      }),
+    );
     if (!res.headersSent)
       res
         .writeHead(502, {

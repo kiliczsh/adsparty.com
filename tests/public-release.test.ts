@@ -103,5 +103,6 @@ describe("public release contract", () => {
     expect(container).toContain('sleepAfter = "10m"');
     expect(worker).toContain('batch.queue === "televole-packaging"');
     expect(station).toContain('u.pathname === "/archive-ready"');
+    expect(read("media-container/server.mjs")).toContain('"content-length"');
   });
 });

@@ -1384,7 +1384,15 @@ async function processPackaging(msg: Message<PackagingMessage>, env: Env) {
       }),
     );
     msg.ack();
-  } catch {
+  } catch (error) {
+    console.warn(
+      JSON.stringify({
+        event: "packaging_attempt_failed",
+        job_id: x.jobId,
+        clip_id: clip.id,
+        error: String(error).slice(0, 160),
+      }),
+    );
     if (Number(job.retry_count || 0) < 2) {
       await env.DB.prepare(
         "UPDATE generation_jobs SET status='source_ready',started_at=?,retry_count=retry_count+1,error='media_packaging_failed' WHERE id=? AND status='packaging'",
