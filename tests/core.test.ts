@@ -18,6 +18,7 @@ import {
   reconstructPlaylistWindow,
   richScore,
   selectBatch,
+  sourceVideoDuration,
   stationCadenceMs,
   updateBible,
   validAdminBearer,
@@ -127,6 +128,12 @@ describe("generation duration", () => {
   it("locks queued jobs to their prompt duration", () => {
     expect(promptDuration("Create an exactly 10-second clip", 5)).toBe(10);
     expect(promptDuration("legacy prompt", 10)).toBe(10);
+  });
+  it("uses the queued prompt when fal omits output duration", () => {
+    expect(
+      sourceVideoDuration(undefined, "Create an exactly 10-second clip", 5),
+    ).toBe(10);
+    expect(sourceVideoDuration(10.144, "legacy prompt", 5)).toBe(10.144);
   });
 });
 describe("bounded rate limiting", () => {

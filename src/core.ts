@@ -71,6 +71,16 @@ export const generationDuration = (v: unknown): 5 | 10 =>
   Number(v) === 10 ? 10 : 5;
 export const promptDuration = (prompt: string, fallback: unknown = 5): 5 | 10 =>
   generationDuration(prompt.match(/exactly\s+(5|10)-second/i)?.[1] ?? fallback);
+export const sourceVideoDuration = (
+  providerDuration: unknown,
+  prompt: string,
+  fallback: unknown = 5,
+): number => {
+  const measured = Number(providerDuration);
+  return Number.isFinite(measured) && measured > 0
+    ? measured
+    : promptDuration(prompt, fallback);
+};
 export function boundedRateHit(
   current: Record<string, number[]>,
   key: string,

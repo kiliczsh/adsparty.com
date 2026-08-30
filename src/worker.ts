@@ -11,6 +11,7 @@ import {
   packagingClaimable,
   policyReject,
   promptDuration,
+  sourceVideoDuration,
   validAdminBearer,
   validClipId,
   validMessage,
@@ -943,7 +944,11 @@ async function processGeneration(msg: Message<GenerationMessage>, env: Env) {
     return;
   }
   const sourceAt = Math.floor(Date.now() / 1000),
-    sourceDuration = Number(result.video?.duration || env.FAL_DURATION) || 5;
+    sourceDuration = sourceVideoDuration(
+      result.video?.duration,
+      x.prompt,
+      env.FAL_DURATION,
+    );
   await env.DB.prepare(
     "INSERT OR IGNORE INTO clips(generation_job_id,prompt,chat_text,generated_at,duration,source,ready) VALUES(?,?,?,?,?,'generated',0)",
   )

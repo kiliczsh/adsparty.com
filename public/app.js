@@ -26,6 +26,8 @@ let directSwitchToken = 0,
   directQueue = [],
   pendingHls = false,
   directPreparing = false,
+  directStallTimer = null,
+  directStallRetries = 0,
   pendingLiveEdgeSegment = null,
   liveEdgeBusy = false;
 const I18N = {
@@ -173,24 +175,22 @@ function applyLanguage(nextLanguage) {
   const verifyKey = $("#verifyNote").dataset.i18n;
   if (verifyKey) setVerify(verifyKey);
 }
-function prefetchMp4(clips = []) {
+function prefetchMp4(clips = [], preferredUrl = null) {
   const connection = navigator.connection;
   if (document.visibilityState === "hidden" || connection?.saveData) return;
   if (["slow-2g", "2g"].includes(connection?.effectiveType)) return;
-  const urls = [
-    ...new Set(
-      clips
-        .map((clip) => clip.mediaUrl)
-        .filter((url) => /^https:\/\/[^/]+\.fal\.media\//i.test(url || "")),
-    ),
-  ]
-    .filter((url) => url !== video.currentSrc && !prefetchedMp4.has(url))
-    .slice(-3);
-  for (const url of urls) {
-    warmMp4(url);
-  }
-  while (prefetchedMp4.size > 3) {
-    const [url, warmup] = prefetchedMp4.entries().next().value;
+  const target =
+    preferredUrl ||
+    directQueue[0]?.mediaUrl ||
+    (directSequence === null ? clips.at(-1)?.mediaUrl : null);
+  if (
+    target &&
+    target !== video.currentSrc &&
+    /^https:\/\/[^/]+\.fal\.media\//i.test(target)
+  )
+    warmMp4(target);
+  for (const [url, warmup] of [...prefetchedMp4]) {
+    if (url === target) continue;
     warmup.removeAttribute("src");
     warmup.load();
     prefetchedMp4.delete(url);
@@ -249,6 +249,7 @@ function highest(details) {
   )[0];
 }
 function startPlayer() {
+  clearDirectStall();
   directSwitchToken++;
   directSequence = null;
   directCurrentClip = null;
@@ -318,6 +319,48 @@ function advanceDirect() {
   if (next) playDirect(next, true);
   else if (pendingHls) startPlayer();
 }
+function clearDirectStall() {
+  if (directStallTimer !== null) clearTimeout(directStallTimer);
+  directStallTimer = null;
+}
+function watchDirectStall() {
+  if (directSequence === null || video.ended || directPreparing) return;
+  const sequence = directSequence;
+  const stalledAt = video.currentTime;
+  clearDirectStall();
+  directStallTimer = setTimeout(() => {
+    directStallTimer = null;
+    if (
+      directSequence !== sequence ||
+      video.ended ||
+      video.currentTime > stalledAt + 0.15
+    )
+      return;
+    if (directStallRetries >= 1) {
+      directStallRetries = 0;
+      const next = directQueue.shift();
+      if (next) playDirect(next, true);
+      else startPlayer();
+      return;
+    }
+    directStallRetries++;
+    const resumeAt = video.currentTime;
+    video.addEventListener(
+      "loadedmetadata",
+      () => {
+        if (directSequence !== sequence) return;
+        if (Number.isFinite(video.duration))
+          video.currentTime = Math.min(
+            resumeAt,
+            Math.max(0, video.duration - 0.1),
+          );
+        video.play().catch(() => {});
+      },
+      { once: true },
+    );
+    video.load();
+  }, 8000);
+}
 async function playDirect(c, force = false) {
   if (directSequence === c.sequence) return;
   if (
@@ -346,6 +389,8 @@ async function playDirect(c, force = false) {
     hls.destroy();
     hls = null;
   }
+  clearDirectStall();
+  directStallRetries = 0;
   directSequence = c.sequence;
   directCurrentClip = c;
   directQueue = directQueue.filter((item) => item.sequence !== c.sequence);
@@ -379,11 +424,20 @@ async function playDirect(c, force = false) {
     video.currentTime = 0;
     reveal();
   } else {
+    video.pause();
+    video.addEventListener(
+      "loadedmetadata",
+      () => {
+        if (directSequence !== sequence || directSwitchToken !== switchToken)
+          return;
+        video.currentTime = 0;
+        video.play().catch(() => {});
+      },
+      { once: true },
+    );
     video.src = c.mediaUrl;
     video.load();
-    video.play().catch(() => {});
-    if (!hasVisibleVideo) reveal();
-    else setTimeout(reveal, 2500);
+    setTimeout(reveal, hasVisibleVideo ? 2500 : 8000);
   }
 }
 async function setSegment(seg, sequence = null) {
@@ -486,7 +540,6 @@ async function refreshMeta() {
         r.json(),
       ),
       latest = m.clips?.at(-1);
-    prefetchMp4(m.clips);
     if (directSequence !== null) {
       const later = (m.clips || []).filter(
         (clip) => Number(clip.sequence) > directSequence,
@@ -497,6 +550,7 @@ async function refreshMeta() {
     } else if (latest?.mediaUrl) {
       playDirect(latest);
     }
+    prefetchMp4(m.clips);
     let currentIndex =
       m.clips?.findIndex((x) => x.sequence === currentSequence) ?? -1;
     if (currentIndex < 0)
@@ -563,10 +617,10 @@ async function goToLiveEdge() {
     const liveTail = meta.clips?.slice(-3) || [];
     const target = liveTail[0];
     if (!target) return;
-    prefetchMp4(liveTail);
     if (target.mediaUrl) {
       directQueue = liveTail.slice(1).filter((clip) => clip.mediaUrl);
       pendingHls = liveTail.slice(1).some((clip) => clip.filename);
+      prefetchMp4(liveTail, directQueue[0]?.mediaUrl || target.mediaUrl);
       await playDirect(target, true);
     } else if (target.filename) {
       if (!(await preloadLiveSegment(target.filename)))
@@ -685,7 +739,13 @@ function cancelGesture() {
   video.style.translate = "";
   drag = null;
 }
-video.addEventListener("ended", advanceDirect);
+video.addEventListener("waiting", watchDirectStall);
+video.addEventListener("stalled", watchDirectStall);
+video.addEventListener("playing", clearDirectStall);
+video.addEventListener("ended", () => {
+  clearDirectStall();
+  advanceDirect();
+});
 $("#screen").addEventListener("pointerdown", (e) => {
   e.currentTarget.setPointerCapture?.(e.pointerId);
   video.style.transition = "none";
