@@ -695,6 +695,8 @@ async function startRecorded(mode) {
   if (liveEdgeBusy) return;
   setLiveEdgeBusy(true);
   const button = $("#liveEdge");
+  const previousRecordedClip = recordedClips[recordedIndex]?.clipId;
+  const wasRecorded = playbackMode !== "live" && recordedIndex >= 0;
   button.classList.remove("live-edge-error", "live-edge-confirmed");
   try {
     const meta = await fetch("/live/archive.json", { cache: "no-store" }).then(
@@ -703,13 +705,14 @@ async function startRecorded(mode) {
     const clips = (meta.clips || []).filter((clip) => clip.mediaUrl);
     if (!clips.length) throw new Error("recordings_unavailable");
     recordedClips = clips;
-    const current = clips.findIndex(
-      (clip) => Number(clip.clipId) === Number(currentClipId),
+    const current = clips.findIndex((clip) =>
+      wasRecorded
+        ? Number(clip.clipId) === Number(previousRecordedClip)
+        : Number(clip.clipId) === Number(currentClipId),
     );
+    const base = current >= 0 ? current : clips.length - 1;
     recordedIndex =
-      mode === "rewind"
-        ? Math.max(0, (current >= 0 ? current : clips.length - 1) - 3)
-        : 0;
+      mode === "rewind" ? (base - 3 + clips.length) % clips.length : 0;
     setPlaybackMode(mode);
     directQueue = [];
     pendingHls = false;

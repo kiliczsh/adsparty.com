@@ -87,6 +87,7 @@ describe("public release contract", () => {
     expect(page).toContain('data-playback="rewind"');
     expect(app).toContain('playbackMode !== "live"');
     expect(app).toContain("% recordedClips.length");
-    expect(app).toContain("current : clips.length - 1) - 3");
+    expect(app).toContain("(base - 3 + clips.length) % clips.length");
+    expect(app).toContain("previousRecordedClip");
   });
 });
