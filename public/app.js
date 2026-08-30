@@ -36,7 +36,8 @@ let directSwitchToken = 0,
   realtime = null,
   realtimeReconnectTimer = null,
   realtimeFallbackTimer = null,
-  realtimeAttempts = 0;
+  realtimeAttempts = 0,
+  lastMeta = null;
 const I18N = {
   tr: {
     title: "Sonsuz televizyon",
@@ -401,7 +402,8 @@ async function playArchivedHls(c, force = false) {
     video.load();
     video.play().catch(() => {});
   } else return false;
-  refreshMeta();
+  if (lastMeta) applyMeta(lastMeta);
+  else if (!realtimeOpen()) refreshMeta();
   return true;
 }
 function playClip(c, force = false) {
@@ -540,8 +542,8 @@ async function setSegment(seg, sequence = null) {
   currentSeg = seg;
   currentClipId = null;
   currentSequence = sequence;
-  await refreshMeta();
-  await refreshLikes();
+  if (lastMeta) applyMeta(lastMeta);
+  else if (!realtimeOpen()) await refreshMeta();
 }
 function addBubble(x, optimistic = false) {
   const existing = document.querySelector(`[data-id="${x.id}"]`);
@@ -627,7 +629,7 @@ function scheduleRealtimeFallback(delay = 1_000) {
   realtimeFallbackTimer = setTimeout(async () => {
     realtimeFallbackTimer = null;
     if (realtimeOpen()) return;
-    await Promise.all([syncChat(), refreshLikes()]);
+    await Promise.all([syncChat(), refreshLikes(), refreshMeta()]);
     scheduleRealtimeFallback(5_000);
   }, delay);
 }
@@ -655,6 +657,10 @@ function handleRealtime(event) {
     applyChatSync({ mine: event.states, viewers: event.viewers });
     return;
   }
+  if (event.type === "station:meta") {
+    applyMeta(event.meta);
+    return;
+  }
   if (
     event.type === "like:update" &&
     Number(event.clipId) === Number(currentClipId)
@@ -678,7 +684,7 @@ function connectRealtime() {
     socket.send(
       JSON.stringify({ type: "sync", since, mine: trackedMessageIds() }),
     );
-    refreshLikes();
+    subscribeLikes();
   });
   socket.addEventListener("message", (message) => {
     if (realtime !== socket || typeof message.data !== "string") return;
@@ -707,77 +713,82 @@ function relativeAge(ts) {
   if (seconds < 86400) return `${Math.floor(seconds / 3600)} sa önce`;
   return `${Math.floor(seconds / 86400)} gün önce`;
 }
+function applyMeta(m) {
+  if (!m || !Array.isArray(m.clips)) return;
+  lastMeta = m;
+  const latest = m.clips.at(-1);
+  if (playbackMode === "live" && directSequence !== null) {
+    const later = (m.clips || []).filter(
+      (clip) => Number(clip.sequence) > directSequence,
+    );
+    const archivedSequences = new Set(
+      later.filter((clip) => clip.filename).map((clip) => clip.sequence),
+    );
+    directQueue = directQueue.filter(
+      (clip) => !archivedSequences.has(clip.sequence),
+    );
+    for (const clip of later) if (clip.mediaUrl) queueDirect(clip);
+    const nextArchived = later.find(
+      (clip) =>
+        clip.filename &&
+        Number(clip.clipId) !== Number(directCurrentClip?.clipId),
+    );
+    if (nextArchived) {
+      pendingHls = true;
+      pendingLiveEdgeSegment = nextArchived.filename;
+    }
+    if (video.ended) advanceDirect();
+  } else if (playbackMode === "live" && latest?.mediaUrl) {
+    playDirect(latest);
+  }
+  if (playbackMode === "live") prefetchMp4(m.clips);
+  else if (recordedClips.length) {
+    const next = recordedClips[(recordedIndex + 1) % recordedClips.length];
+    prefetchMp4(recordedClips, next?.mediaUrl);
+  }
+  let currentIndex =
+    m.clips?.findIndex((x) => x.sequence === currentSequence) ?? -1;
+  if (currentIndex < 0)
+    currentIndex =
+      m.clips?.findLastIndex((x) => x.filename === currentSeg) ?? -1;
+  const c =
+    currentIndex >= 0 ? m.clips[currentIndex] : directCurrentClip || latest;
+  if (c) {
+    setLikeClip(c.clipId);
+    if (!hls && !directSequence && !currentSeg) {
+      currentSeg = c.filename;
+      currentSequence = c.sequence;
+    }
+    currentReplay = Boolean(c.replay);
+    $("#liveMode").textContent = currentReplay ? copy().rerun : copy().live;
+    $("#onairText").textContent = c.chatText || c.filename;
+    $("#airAge").textContent = c.replay ? relativeAge(c.generatedAt) : "";
+    if (!c.replay) seenFresh.add(`${c.sequence}:${c.filename || c.mediaUrl}`);
+  }
+  const later =
+    playbackMode === "live" &&
+    m.clips
+      ?.slice(currentIndex + 1)
+      .find(
+        (x) =>
+          !x.replay &&
+          !seenFresh.has(`${x.sequence}:${x.filename || x.mediaUrl}`),
+      );
+  if (later?.mediaUrl) playDirect(later);
+  else if (later && hls) {
+    const archived = m.clips.filter((x) => x.filename),
+      i = archived.indexOf(later);
+    if (known[i] && Number.isFinite(known[i].start))
+      video.currentTime = known[i].start + 0.05;
+  }
+}
 async function refreshMeta() {
   try {
-    const m = await fetch("/live/meta.json", { cache: "no-store" }).then((r) =>
-        r.json(),
+    applyMeta(
+      await fetch("/live/meta.json", { cache: "no-store" }).then((response) =>
+        response.json(),
       ),
-      latest = m.clips?.at(-1);
-    if (playbackMode === "live" && directSequence !== null) {
-      const later = (m.clips || []).filter(
-        (clip) => Number(clip.sequence) > directSequence,
-      );
-      const archivedSequences = new Set(
-        later.filter((clip) => clip.filename).map((clip) => clip.sequence),
-      );
-      directQueue = directQueue.filter(
-        (clip) => !archivedSequences.has(clip.sequence),
-      );
-      for (const clip of later) if (clip.mediaUrl) queueDirect(clip);
-      const nextArchived = later.find(
-        (clip) =>
-          clip.filename &&
-          Number(clip.clipId) !== Number(directCurrentClip?.clipId),
-      );
-      if (nextArchived) {
-        pendingHls = true;
-        pendingLiveEdgeSegment = nextArchived.filename;
-      }
-      if (video.ended) advanceDirect();
-    } else if (playbackMode === "live" && latest?.mediaUrl) {
-      playDirect(latest);
-    }
-    if (playbackMode === "live") prefetchMp4(m.clips);
-    else if (recordedClips.length) {
-      const next = recordedClips[(recordedIndex + 1) % recordedClips.length];
-      prefetchMp4(recordedClips, next?.mediaUrl);
-    }
-    let currentIndex =
-      m.clips?.findIndex((x) => x.sequence === currentSequence) ?? -1;
-    if (currentIndex < 0)
-      currentIndex =
-        m.clips?.findLastIndex((x) => x.filename === currentSeg) ?? -1;
-    const c =
-      currentIndex >= 0 ? m.clips[currentIndex] : directCurrentClip || latest;
-    if (c) {
-      setLikeClip(c.clipId);
-      if (!hls && !directSequence && !currentSeg) {
-        currentSeg = c.filename;
-        currentSequence = c.sequence;
-        refreshLikes();
-      }
-      currentReplay = Boolean(c.replay);
-      $("#liveMode").textContent = currentReplay ? copy().rerun : copy().live;
-      $("#onairText").textContent = c.chatText || c.filename;
-      $("#airAge").textContent = c.replay ? relativeAge(c.generatedAt) : "";
-      if (!c.replay) seenFresh.add(`${c.sequence}:${c.filename || c.mediaUrl}`);
-    }
-    const later =
-      playbackMode === "live" &&
-      m.clips
-        ?.slice(currentIndex + 1)
-        .find(
-          (x) =>
-            !x.replay &&
-            !seenFresh.has(`${x.sequence}:${x.filename || x.mediaUrl}`),
-        );
-    if (later?.mediaUrl) playDirect(later);
-    else if (later && hls) {
-      const archived = m.clips.filter((x) => x.filename),
-        i = archived.indexOf(later);
-      if (known[i] && Number.isFinite(known[i].start))
-        video.currentTime = known[i].start + 0.05;
-    }
+    );
   } catch {}
 }
 async function preloadLiveSegment(filename) {
@@ -895,7 +906,12 @@ function setLikeClip(clipId) {
   currentClipId = next;
   lastRemoteLikes = 0;
   $("#likes").textContent = "0";
-  refreshLikes();
+  if (realtimeOpen()) subscribeLikes();
+  else refreshLikes();
+}
+function subscribeLikes() {
+  if (!realtimeOpen() || !currentClipId) return;
+  realtime.send(JSON.stringify({ type: "watch", clipId: currentClipId }));
 }
 function likeTarget() {
   if (currentClipId)
@@ -1092,7 +1108,8 @@ setPlaybackMode("live");
 applyLanguage(language);
 $("#language").addEventListener("change", (e) => {
   applyLanguage(e.currentTarget.value);
-  refreshMeta();
+  if (lastMeta) applyMeta(lastMeta);
+  else if (!realtimeOpen()) refreshMeta();
 });
 $("#chatToggle").addEventListener("click", (e) => {
   e.stopPropagation();
@@ -1236,10 +1253,8 @@ fetch("/api/config")
     }
   });
 startPlayer();
-syncChat();
 connectRealtime();
-refreshMeta();
-setInterval(refreshMeta, 3000);
+scheduleRealtimeFallback(1_500);
 window.addEventListener("online", connectRealtime);
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible" && !realtimeOpen())

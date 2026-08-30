@@ -25,7 +25,11 @@ type Entry = {
   chatText: string;
   generatedAt: number;
 };
-type SocketAttachment = { viewerId: string; lastSyncAt: number };
+type SocketAttachment = {
+  viewerId: string;
+  lastSyncAt: number;
+  lastWatchAt: number;
+};
 type PublicEvent =
   | {
       type: "chat:new";
@@ -123,6 +127,19 @@ export class Station extends DurableObject<Env> {
   private broadcast(event: unknown) {
     for (const socket of this.ctx.getWebSockets()) this.send(socket, event);
   }
+  private publicMeta(s: State) {
+    return {
+      sequence: s.mediaSequence,
+      clips: s.window.map((entry) => ({
+        ...entry,
+        chatText: publicAttribution(entry.chatText),
+      })),
+    };
+  }
+  private broadcastMeta(s: State) {
+    if (!this.ctx.getWebSockets().length) return;
+    this.broadcast({ type: "station:meta", meta: this.publicMeta(s) });
+  }
   private async sendChatSnapshot(
     socket?: WebSocket,
     since = 0,
@@ -167,6 +184,19 @@ export class Station extends DurableObject<Env> {
       ),
       viewers: this.viewerCount(s),
     });
+  }
+  private async sendLikeSnapshot(socket: WebSocket, clipId: number) {
+    const s = await this.state();
+    if (!knownLikeTarget(s.window, s.recentClipIds || [], clipId, "")) {
+      this.send(socket, { type: "like:update", clipId, likes: 0 });
+      return;
+    }
+    const likes = await this.env.DB.prepare(
+      "SELECT (SELECT COUNT(*) FROM likes WHERE clip_id=?)+(SELECT COUNT(*) FROM like_events WHERE clip_id=?) n",
+    )
+      .bind(clipId, clipId)
+      .first<number>("n");
+    this.send(socket, { type: "like:update", clipId, likes: likes || 0 });
   }
   async alarm() {
     try {
@@ -448,6 +478,7 @@ export class Station extends DurableObject<Env> {
     await this.save(s);
     if (this.ctx.getWebSockets().length) {
       try {
+        this.broadcastMeta(s);
         await this.broadcastChatStates();
       } catch (error) {
         console.error(
@@ -481,12 +512,14 @@ export class Station extends DurableObject<Env> {
       server.serializeAttachment({
         viewerId: viewer,
         lastSyncAt: 0,
+        lastWatchAt: 0,
       } satisfies SocketAttachment);
       this.ctx.acceptWebSocket(server, ["viewer"]);
       this.send(server, {
         type: "connected",
         viewers: this.viewerCount(s),
       });
+      this.send(server, { type: "station:meta", meta: this.publicMeta(s) });
       this.broadcast({
         type: "viewers:update",
         viewers: this.viewerCount(s),
@@ -541,16 +574,9 @@ export class Station extends DurableObject<Env> {
       );
     }
     if (u.pathname === "/meta")
-      return Response.json(
-        {
-          sequence: s.mediaSequence,
-          clips: s.window.map((x) => ({
-            ...x,
-            chatText: publicAttribution(x.chatText),
-          })),
-        },
-        { headers: { "cache-control": "no-store" } },
-      );
+      return Response.json(this.publicMeta(s), {
+        headers: { "cache-control": "no-store" },
+      });
     if (u.pathname === "/latest") {
       const playable =
         "((c.ready=1 AND c.segment_filename IS NOT NULL AND c.r2_key IS NOT NULL) OR src.value IS NOT NULL)";
@@ -632,6 +658,7 @@ export class Station extends DurableObject<Env> {
       s.window = s.window.filter((x) => x.clipId !== clipId);
       s.recentClipIds = (s.recentClipIds || []).filter((id) => id !== clipId);
       await this.save(s);
+      this.broadcastMeta(s);
       return Response.json({ ok: true });
     }
     if (u.pathname === "/archive-ready" && req.method === "POST") {
@@ -654,6 +681,7 @@ export class Station extends DurableObject<Env> {
         };
       });
       await this.save(s);
+      this.broadcastMeta(s);
       return Response.json({ ok: true, upgraded });
     }
     if (u.pathname === "/job" && req.method === "POST") {
@@ -694,6 +722,7 @@ export class Station extends DurableObject<Env> {
           .run();
       }
       await this.save(s);
+      this.broadcastMeta(s);
       return Response.json({ ok: true });
     }
     const counts = await this.env.DB.prepare(
@@ -733,11 +762,21 @@ export class Station extends DurableObject<Env> {
         type?: string;
         since?: unknown;
         mine?: unknown;
+        clipId?: unknown;
       };
-      if (input.type !== "sync") return;
       const attachment =
         socket.deserializeAttachment() as SocketAttachment | null;
       const now = Date.now();
+      if (input.type === "watch") {
+        if (attachment && now - attachment.lastWatchAt < 250) return;
+        const clipId = Number(input.clipId);
+        if (!Number.isSafeInteger(clipId) || clipId <= 0) return;
+        if (attachment)
+          socket.serializeAttachment({ ...attachment, lastWatchAt: now });
+        await this.sendLikeSnapshot(socket, clipId);
+        return;
+      }
+      if (input.type !== "sync") return;
       if (attachment && now - attachment.lastSyncAt < 2_000) return;
       if (attachment)
         socket.serializeAttachment({ ...attachment, lastSyncAt: now });

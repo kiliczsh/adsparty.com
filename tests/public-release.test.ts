@@ -132,9 +132,15 @@ describe("public release contract", () => {
     expect(station).toContain("async webSocketMessage");
     expect(station).toContain("now - attachment.lastSyncAt < 2_000");
     expect(station).toContain('type: "chat:states"');
+    expect(station).toContain('type: "station:meta"');
+    expect(station).toContain('input.type === "watch"');
+    expect(station).toContain("sendLikeSnapshot");
     expect(app).toContain("new WebSocket");
+    expect(app).toContain('event.type === "station:meta"');
+    expect(app).toContain("subscribeLikes");
     expect(app).toContain("scheduleRealtimeFallback(5_000)");
     expect(app).not.toContain("setTimeout(pollChat, 2500)");
     expect(app).not.toContain("setInterval(refreshLikes, 3000)");
+    expect(app).not.toContain("setInterval(refreshMeta, 3000)");
   });
 });
