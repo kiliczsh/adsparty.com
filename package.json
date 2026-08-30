@@ -1,0 +1,42 @@
+{
+  "name": "adsparty",
+  "version": "1.0.0",
+  "private": true,
+  "description": "An endless, chat-directed AI television station on Cloudflare.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kiliczsh/adsparty.com.git"
+  },
+  "homepage": "https://adsparty.com/",
+  "bugs": "https://github.com/kiliczsh/adsparty.com/issues",
+  "engines": {
+    "node": ">=22"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "build": "wrangler deploy --dry-run --containers-rollout=none --outdir dist",
+    "deploy": "wrangler deploy",
+    "ingest:clip": "node scripts/ingest-clip.mjs",
+    "ingest:demos": "node scripts/ingest-demo-list.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "lint": "tsc --noEmit && prettier --check .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "dependencies": {
+    "@cloudflare/containers": "^0.3.7"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.22.0",
+    "@cloudflare/workers-types": "^5.20260829.1",
+    "@types/node": "^26.4.0",
+    "playwright": "^1.62.1",
+    "prettier": "^3.9.6",
+    "typescript": "^5.9.2",
+    "vitest": "^4.1.0",
+    "wrangler": "^4.127.1"
+  }
+}

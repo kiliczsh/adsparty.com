@@ -1,0 +1,95 @@
+.queueGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 12px;
+}
+.queuePanel {
+  min-width: 0;
+  padding: 16px;
+}
+.queuePanel ol {
+  max-height: 360px;
+  overflow: auto;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.queuePanel li {
+  padding: 10px 2px;
+  border-bottom: 1px solid #20232a;
+}
+.queuePanel li > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+}
+.queuePanel b,
+.queuePanel em,
+.queuePanel small {
+  font-family: ui-monospace, monospace;
+}
+.queuePanel b {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.queuePanel em {
+  color: var(--green);
+  font-size: 9px;
+  font-style: normal;
+  text-transform: uppercase;
+}
+.queuePanel small {
+  color: var(--muted);
+  font-size: 10px;
+}
+.queuePanel p {
+  display: -webkit-box;
+  margin: 7px 0 4px;
+  overflow: hidden;
+  color: #b8bdc6;
+  font-size: 11px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+.queuePanel li > .messageActions {
+  display: flex;
+  grid-template-columns: none;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 7px;
+}
+.messageActions button {
+  padding: 5px 8px;
+  font:
+    650 9px ui-monospace,
+    monospace;
+}
+.queuePanel .state-failed em,
+.queuePanel .state-rejected em {
+  color: var(--red);
+}
+.queuePanel .state-aired em,
+.queuePanel .state-ready em {
+  color: var(--amber);
+}
+.clipPanel {
+  margin-top: 12px;
+}
+.clipPanel ol {
+  max-height: 420px;
+}
+@media (max-width: 760px) {
+  .queueGrid {
+    grid-template-columns: 1fr;
+  }
+  .queuePanel ol {
+    max-height: 300px;
+  }
+}

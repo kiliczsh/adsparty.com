@@ -1,0 +1,11 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "watch",
+  "main": "src/watch-proxy.ts",
+  "compatibility_date": "2026-08-29",
+  "account_id": "63ba7ddbe8724a0a4579bf01c91c3aa8",
+  "workers_dev": true,
+  "preview_urls": false,
+  "services": [{ "binding": "ORIGIN", "service": "televole-live" }],
+  "observability": { "enabled": true },
+}

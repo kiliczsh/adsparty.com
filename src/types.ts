@@ -1,0 +1,44 @@
+export interface Env {
+  DB: D1Database;
+  MEDIA: R2Bucket;
+  STATION: DurableObjectNamespace;
+  GENERATION_QUEUE: Queue;
+  ASSETS: Fetcher;
+  BRAND_NAME: string;
+  FAL_MODEL: string;
+  FAL_DURATION: string;
+  FAL_RESOLUTION: string;
+  FAL_ASPECT_RATIO: string;
+  FAL_PROMPT_EXPANSION: string;
+  FAL_KEY?: string;
+  DIRECTOR_PROVIDER: string;
+  DIRECTOR_MODEL: string;
+  DIRECTOR_BASE_URL: string;
+  DIRECTOR_API_KEY?: string;
+  TURNSTILE_SITE_KEY: string;
+  TURNSTILE_SECRET_KEY?: string;
+  VIEWER_SIGNING_KEY?: string;
+  GA_MEASUREMENT_ID?: string;
+  ADMIN_TOKEN?: string;
+  PACKAGER_TOKEN?: string;
+  STRIPE_ENABLED: string;
+  STRIPE_SECRET_KEY?: string;
+  STRIPE_WEBHOOK_SECRET?: string;
+  STRIPE_PRICE_ID: string;
+  MEDIA_PACKAGER?: DurableObjectNamespace;
+}
+export type GenerationMessage = {
+  jobId: string;
+  messageIds: number[];
+  selected: Array<{
+    id: number;
+    user: string;
+    msg: string;
+    created_at: number;
+  }>;
+  prompt: string;
+  chatText: string;
+  phase?: "submit" | "poll";
+  falRequestId?: string;
+  attempt?: number;
+};
