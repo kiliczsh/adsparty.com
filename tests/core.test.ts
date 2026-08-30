@@ -9,6 +9,7 @@ import {
   falQueueRequestUrl,
   generationDuration,
   hardReject,
+  inferVisualMedium,
   knownLikeTarget,
   packagingClaimable,
   playlist,
@@ -107,10 +108,45 @@ describe("director", () => {
       previous_owner: null,
       note: "",
     });
-    expect(prompt).toContain("0–2s");
-    expect(prompt).toContain("one decisive visual action");
+    expect(prompt).toContain("0–1.5s");
+    expect(prompt).toContain("one readable dramatic event");
     expect(prompt).toContain("subtle VHS tracking noise");
-    expect(prompt).toContain("avoid random transformations");
+    expect(prompt).toContain("random transformations");
+  });
+
+  it("uses a complete three-beat timeline for ten-second clips", () => {
+    const prompt = buildPrompt(
+      [items[1]],
+      {
+        props: [],
+        last_form: null,
+        previous_setting: null,
+        previous_owner: null,
+        note: "",
+      },
+      10,
+    );
+    expect(prompt).toContain("0–2s");
+    expect(prompt).toContain("2–7s");
+    expect(prompt).toContain("7–10s");
+  });
+
+  it("honors animation requests instead of forcing live action", () => {
+    const animated = [{ ...items[1], msg: "Invincible cartoon continues" }];
+    const prompt = buildPrompt(
+      animated,
+      {
+        props: [],
+        last_form: null,
+        previous_setting: null,
+        previous_owner: null,
+        note: "",
+      },
+      10,
+    );
+    expect(inferVisualMedium(animated[0].msg)).toBe("stylized 2D animation");
+    expect(prompt).toContain("Medium: stylized 2D animation");
+    expect(prompt).not.toContain("cinematic live-action television clip");
   });
 });
 describe("public branding", () => {
@@ -172,6 +208,57 @@ describe("continuity", () => {
   it("expires after six", () =>
     expect(expireBible(b, 8).props).toHaveLength(0));
   it("reruns do not mutate", () => expect(updateBible(b, 9, [], true)).toBe(b));
+  it("captures character, setting, medium, and textual handoff anchors", () => {
+    const next = updateBible(b, 2, [
+      {
+        id: 1,
+        user: "director",
+        msg: "Walter Bishop and Peter Bishop stand in Walter's Harvard lab in an animated scene",
+        created_at: 1,
+      },
+    ]);
+    expect(next.characters).toEqual(["Walter Bishop", "Peter Bishop"]);
+    expect(next.previous_setting).toContain("Walter's Harvard lab");
+    expect(next.medium).toBe("stylized 2D animation");
+    expect(next.end_state).toContain("Walter Bishop and Peter Bishop");
+  });
+  it("carries matching sequences but resets unrelated setups", () => {
+    const anchored: Bible = {
+      ...b,
+      characters: ["Walter Bishop", "Peter Bishop"],
+      medium: "cinematic live action",
+      previous_setting: "Walter's Harvard lab",
+      end_state: "Peter reaches toward the blue machine",
+    };
+    const continued = buildPrompt(
+      [
+        {
+          id: 1,
+          user: "x",
+          msg: "Same lab. Peter touches the machine",
+          created_at: 1,
+        },
+      ],
+      anchored,
+      10,
+    );
+    const reset = buildPrompt(
+      [
+        {
+          id: 2,
+          user: "x",
+          msg: "A cartoon robot dances on Mars",
+          created_at: 2,
+        },
+      ],
+      anchored,
+      10,
+    );
+    expect(continued).toContain("Walter Bishop, Peter Bishop");
+    expect(continued).toContain("Peter reaches toward the blue machine");
+    expect(reset).toContain("Clean scene setup");
+    expect(reset).not.toContain("Walter Bishop");
+  });
 });
 describe("hls and state", () => {
   it("builds discontinuities", () => {
