@@ -65,8 +65,6 @@ const I18N = {
     message: "MESAJ",
     placeholder: "sırada ne yayınlansın?",
     send: "GÖNDER ▶",
-    continuity: "SÜREKLİLİK",
-    static: "parazit",
     expandChat: "Sohbeti aç",
     collapseChat: "Sohbeti daralt",
     verified: "doğrulandı",
@@ -115,8 +113,6 @@ const I18N = {
     message: "MESSAGE",
     placeholder: "what should air next?",
     send: "SEND ▶",
-    continuity: "CONTINUITY",
-    static: "static",
     expandChat: "Expand chat",
     collapseChat: "Collapse chat",
     verified: "verified",
@@ -179,9 +175,6 @@ function applyLanguage(nextLanguage) {
   $("#messageLabel").textContent = c.message;
   $("#msg").placeholder = c.placeholder;
   $("#sendButton").textContent = c.send;
-  $("#continuityLabel").textContent = c.continuity;
-  if (["parazit", "static"].includes($("#propList").textContent))
-    $("#propList").textContent = c.static;
   $("#language").value = language;
   setChatCollapsed($("#station").classList.contains("chat-collapsed"));
   const fullscreen = Boolean(document.fullscreenElement);

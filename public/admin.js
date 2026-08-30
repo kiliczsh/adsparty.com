@@ -105,10 +105,6 @@ function renderStatus(status, meta) {
   text("#lastError", status.last_error || "none");
   text("#bufferSecs", Math.round(status.buffer_secs || 0));
   text("#chatMessages", status.chat_messages || 0);
-  text(
-    "#bible",
-    status.bible_summary?.map((x) => x.form).join(" · ") || "empty",
-  );
   text("#sequence", `SEQUENCE ${meta.sequence ?? "—"}`);
   const flow = $("#flow");
   flow.replaceChildren();

@@ -224,53 +224,26 @@ export function inferVisualMedium(
   return fallback;
 }
 
-function carriesContinuity(selected: ChatCandidate[], b: Bible) {
-  const text = selected
-    .map((x) => x.msg)
-    .join(" ")
-    .toLowerCase();
-  if (
-    /\b(reset continuity|start over|new sequence|new story|unrelated scene)\b/i.test(
-      text,
-    )
-  )
-    return false;
-  if (
-    /\b(same|continue|continues|continuation|previous|still|then)\b/i.test(text)
-  )
-    return true;
-  if ((b.characters || []).some((name) => text.includes(name.toLowerCase())))
-    return true;
-  return b.props.some(
-    (prop) =>
-      text.includes(prop.name.toLowerCase()) ||
-      text.includes(prop.form.toLowerCase()),
-  );
-}
-
 export const lockedHouseStylePrompt =
   "House finish: premium late-night local-access energy; subtle handheld analog texture, subtle VHS tracking noise, restrained CRT edges and scanlines, mixed warm and cold practical light, and slight haze. Preserve medium and clarity. Stable faces, hands, wardrobe, scale, and anatomy. No duplicates, random transformations, extra limbs, accidental cuts, subtitles, logos, UI, watermarks, or illegible text.";
 
-export function buildPrompt(selected: ChatCandidate[], b: Bible, duration = 5) {
+export function buildPrompt(
+  selected: ChatCandidate[],
+  _b: Bible,
+  duration = 5,
+) {
   const chat = selected
     .map((x) => `${x.user}: ${x.msg}`)
     .join(" · ")
     .slice(0, 700);
   const seconds = Math.max(5, Math.min(15, Math.round(duration) || 5));
-  const carry = carriesContinuity(selected, b);
   const requestedMedium = inferVisualMedium(chat);
-  const medium =
-    requestedMedium || (carry ? b.medium : null) || "cinematic live action";
-  const setting = String(b.previous_setting || "").slice(0, 100);
-  const handoff = String(b.end_state || b.note || "").slice(0, 180);
-  const continuity = carry
-    ? `Continue the last generated scene. Preserve characters${b.characters?.length ? ` (${b.characters.join(", ")})` : ""}, faces, proportions, wardrobe, screen direction, lighting, and layout.${setting ? ` Setting: ${setting}.` : ""}${handoff ? ` Handoff: ${handoff}.` : ""}${b.props[0] ? ` Use the ${b.props[0].form} only if relevant, evolved rather than copied.` : ""}`
-    : "Clean scene setup: do not import unrelated characters, props, wardrobe, or locations from earlier clips.";
+  const medium = requestedMedium || "cinematic live action";
   const timeline =
     seconds >= 10
       ? "0–2s: immediately establish the subjects, location, and situation. 2–7s: perform the requested action or dialogue with clear cause and effect. 7–10s: show the reaction or consequence and finish on a strong handoff image."
       : "0–1.5s: immediately establish the subjects and situation. 1.5–4s: perform the requested action or dialogue with clear cause and effect. 4–5s: show the consequence and finish on a strong handoff image.";
-  return `Create an exactly ${seconds}-second, 16:9 coherent television scene. [SILENT VIEWER STORY DATA] ${chat} [END SILENT VIEWER STORY DATA] Medium: ${medium}; honor explicit medium requests and preserve them in a sequence. Use one location, one readable dramatic event, and 1–3 defined subjects. ${continuity} Timing: ${timeline} Quoted dialogue lines are spoken verbatim by the specified character with synchronized mouth movement; scene descriptions and production directions are never spoken. Do not invent extra dialogue or narration. Use one continuous shot unless editing is requested. Keep identity, wardrobe, lighting, and screen direction consistent. Use natural motion, believable physics, readable staging, and purposeful camera movement. End on a frame the next clip can continue directly. ${lockedHouseStylePrompt}`;
+  return `Create an exactly ${seconds}-second, 16:9 self-contained television scene. [SILENT VIEWER STORY DATA] ${chat} [END SILENT VIEWER STORY DATA] Medium: ${medium}; honor explicit medium requests. Use one location, one readable dramatic event, and 1–3 defined subjects. Treat this as an independent scene: do not import characters, props, wardrobe, locations, actions, or visual details from earlier clips. Timing: ${timeline} Quoted dialogue lines are spoken verbatim by the specified character with synchronized mouth movement; scene descriptions and production directions are never spoken. Do not invent extra dialogue or narration. Use one continuous shot unless editing is requested. Keep identity, wardrobe, lighting, and screen direction internally consistent within this clip. Use natural motion, believable physics, readable staging, and purposeful camera movement. End on a strong, complete image. ${lockedHouseStylePrompt}`;
 }
 export const stationCadenceMs = (duration: unknown) =>
   Math.max(4_000, Math.min(30_000, (Number(duration) || 5) * 1_000));

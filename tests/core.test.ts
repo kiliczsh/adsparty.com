@@ -225,7 +225,7 @@ describe("continuity", () => {
     expect(next.medium).toBe("stylized 2D animation");
     expect(next.end_state).toContain("Walter Bishop and Peter Bishop");
   });
-  it("carries matching sequences but resets unrelated setups", () => {
+  it("keeps every generated scene independent from stored continuity", () => {
     const anchored: Bible = {
       ...b,
       characters: ["Walter Bishop", "Peter Bishop"],
@@ -257,9 +257,10 @@ describe("continuity", () => {
       anchored,
       10,
     );
-    expect(continued).toContain("Walter Bishop, Peter Bishop");
-    expect(continued).toContain("Peter reaches toward the blue machine");
-    expect(reset).toContain("Clean scene setup");
+    expect(continued).toContain("independent scene");
+    expect(continued).not.toContain("Walter Bishop, Peter Bishop");
+    expect(continued).not.toContain("Peter reaches toward the blue machine");
+    expect(reset).toContain("independent scene");
     expect(reset).not.toContain("Walter Bishop");
   });
 });

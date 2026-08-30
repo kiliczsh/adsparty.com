@@ -1,14 +1,12 @@
 import { DurableObject } from "cloudflare:workers";
 import {
   boundedRateHit,
-  expireBible,
   knownLikeTarget,
   playlist,
   providerGenerationDuration,
   publicAttribution,
   reconstructPlaylistWindow,
   stationCadenceMs,
-  updateBible,
   videoProvider,
   type Bible,
   type ChatCandidate,
@@ -251,18 +249,6 @@ export class Station extends DurableObject<Env> {
     await this.env.DB.prepare(
       "UPDATE messages SET status='aired',aired_at=COALESCE(aired_at,(SELECT first_aired_at FROM clips WHERE clips.generation_job_id=messages.job_id)) WHERE status='ready' AND EXISTS (SELECT 1 FROM clips WHERE clips.generation_job_id=messages.job_id AND clips.first_aired_at IS NOT NULL)",
     ).run();
-    if (s.bible.props.length === 0) {
-      const persisted = await this.env.DB.prepare(
-        "SELECT value FROM settings WHERE key='bible'",
-      ).first<string>("value");
-      if (persisted) {
-        try {
-          s.bible = JSON.parse(persisted) as Bible;
-        } catch {
-          console.error(JSON.stringify({ event: "bible_hydration_failed" }));
-        }
-      }
-    }
     if (!s.window.length) {
       const history = await this.env.DB.prepare(
         "SELECT id,segment_filename,duration,chat_text,generated_at FROM clips WHERE ready=1 AND segment_filename IS NOT NULL AND r2_key IS NOT NULL ORDER BY COALESCE(first_aired_at,generated_at) DESC,id DESC LIMIT 6",
@@ -493,14 +479,6 @@ export class Station extends DurableObject<Env> {
         );
       }
     }
-    s.bible = expireBible(
-      s.bible,
-      Number(
-        (await this.env.DB.prepare(
-          "SELECT COUNT(*) n FROM clips WHERE ready=1 AND source='generated'",
-        ).first("n")) || 0,
-      ),
-    );
     await this.save(s);
     if (this.ctx.getWebSockets().length) {
       try {
@@ -664,7 +642,7 @@ export class Station extends DurableObject<Env> {
       return Response.json(
         {
           style: "cursed analog late-night television",
-          props: s.bible.props,
+          props: [],
           updated_at: Math.floor(Date.now() / 1000),
         },
         { headers: { "cache-control": "no-store" } },
@@ -740,12 +718,6 @@ export class Station extends DurableObject<Env> {
             ).bind(Math.floor(Date.now() / 1000), x.generation),
           ]);
         }
-        s.bible = updateBible(s.bible, x.generation, x.selected || []);
-        await this.env.DB.prepare(
-          "INSERT OR REPLACE INTO settings(key,value,updated_at) VALUES('bible',?,?)",
-        )
-          .bind(JSON.stringify(s.bible), Math.floor(Date.now() / 1000))
-          .run();
       }
       await this.save(s);
       this.broadcastMeta(s);
@@ -776,7 +748,7 @@ export class Station extends DurableObject<Env> {
           .slice(-6)
           .map((x) => ({ ...x, chatText: publicAttribution(x.chatText) })),
         ts: Math.floor(Date.now() / 1000),
-        bible_summary: s.bible.props,
+        bible_summary: [],
       },
       { headers: { "cache-control": "no-store" } },
     );
