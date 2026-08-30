@@ -46,7 +46,9 @@ function renderGeneration(settings) {
 }
 function renderIntegrations(data) {
   for (const [id, key] of [
+    ["#videoProviderState", "video_provider"],
     ["#falState", "fal"],
+    ["#wiroState", "wiro"],
     ["#packagerState", "media_packager"],
     ["#turnstileState", "turnstile"],
     ["#directorState", "director"],
@@ -55,9 +57,13 @@ function renderIntegrations(data) {
     const node = $(id),
       value = data[key] || "unknown";
     node.textContent = value.replaceAll("_", " ");
-    node.className = ["configured", "sandbox_ready", "deterministic"].includes(
-      value,
-    )
+    node.className = [
+      "fal",
+      "wiro",
+      "configured",
+      "sandbox_ready",
+      "deterministic",
+    ].includes(value)
       ? "ok"
       : value === "disabled"
         ? "idle"
@@ -439,10 +445,10 @@ $("#jobQueue").addEventListener("click", async (e) => {
         : "";
     button.textContent =
       result.queue_position === null
-        ? `FAL: ${result.provider_status || "N/A"}${http}`
-        : `FAL: ${result.provider_status} #${result.queue_position}${http}`;
+        ? `${String(result.provider || "provider").toUpperCase()}: ${result.provider_status || "N/A"}${http}`
+        : `${String(result.provider || "provider").toUpperCase()}: ${result.provider_status} #${result.queue_position}${http}`;
   } catch {
-    button.textContent = "FAL CHECK FAILED";
+    button.textContent = "PROVIDER CHECK FAILED";
   } finally {
     button.disabled = false;
   }

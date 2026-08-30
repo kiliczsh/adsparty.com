@@ -8,6 +8,8 @@ describe("public release contract", () => {
     const example = read(".env.example");
     for (const name of [
       "FAL_KEY",
+      "WIRO_API_KEY",
+      "WIRO_API_SECRET",
       "DIRECTOR_API_KEY",
       "TURNSTILE_SECRET_KEY",
       "VIEWER_SIGNING_KEY",

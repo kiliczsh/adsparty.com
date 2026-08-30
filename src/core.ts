@@ -69,6 +69,16 @@ export const publicAttribution = (v: unknown) =>
   String(v || "").replace(/^adsparty(?:\.com)?:\s*/i, "station: ");
 export const generationDuration = (v: unknown): 5 | 10 =>
   Number(v) === 10 ? 10 : 5;
+export const videoProvider = (v: unknown): "fal" | "wiro" => {
+  if (v === "wiro") return "wiro";
+  if (v === undefined || v === null || v === "" || v === "fal") return "fal";
+  throw new Error("invalid_video_provider");
+};
+export const providerGenerationDuration = (
+  provider: "fal" | "wiro",
+  configuredDuration: unknown,
+): 5 | 10 =>
+  provider === "wiro" ? 10 : generationDuration(configuredDuration);
 export const promptDuration = (prompt: string, fallback: unknown = 5): 5 | 10 =>
   generationDuration(prompt.match(/exactly\s+(5|10)-second/i)?.[1] ?? fallback);
 export const sourceVideoDuration = (

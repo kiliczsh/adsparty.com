@@ -11,6 +11,12 @@ export interface Env {
   FAL_ASPECT_RATIO: string;
   FAL_PROMPT_EXPANSION: string;
   FAL_KEY?: string;
+  VIDEO_PROVIDER?: string;
+  WIRO_API_KEY?: string;
+  WIRO_API_SECRET?: string;
+  WIRO_RESOLUTION?: string;
+  WIRO_RATIO?: string;
+  WIRO_SEED?: string;
   DIRECTOR_PROVIDER: string;
   DIRECTOR_MODEL: string;
   DIRECTOR_BASE_URL: string;
@@ -39,6 +45,7 @@ export type GenerationMessage = {
   prompt: string;
   chatText: string;
   phase?: "submit" | "poll";
+  provider?: "fal" | "wiro";
   falRequestId?: string;
   attempt?: number;
 };

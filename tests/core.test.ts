@@ -13,6 +13,7 @@ import {
   packagingClaimable,
   playlist,
   policyReject,
+  providerGenerationDuration,
   promptDuration,
   publicAttribution,
   reconstructPlaylistWindow,
@@ -26,6 +27,7 @@ import {
   validMessage,
   validNick,
   validSegment,
+  videoProvider,
   type Bible,
   type Policy,
 } from "../src/core";
@@ -134,6 +136,19 @@ describe("generation duration", () => {
       sourceVideoDuration(undefined, "Create an exactly 10-second clip", 5),
     ).toBe(10);
     expect(sourceVideoDuration(10.144, "legacy prompt", 5)).toBe(10.144);
+  });
+});
+describe("video provider", () => {
+  it("defaults to fal and accepts only the configured providers", () => {
+    expect(videoProvider(undefined)).toBe("fal");
+    expect(videoProvider("fal")).toBe("fal");
+    expect(videoProvider("wiro")).toBe("wiro");
+    expect(() => videoProvider("unknown")).toThrow("invalid_video_provider");
+  });
+  it("locks Wiro station clips to 10 seconds", () => {
+    expect(providerGenerationDuration("wiro", 5)).toBe(10);
+    expect(providerGenerationDuration("wiro", 10)).toBe(10);
+    expect(providerGenerationDuration("fal", 5)).toBe(5);
   });
 });
 describe("bounded rate limiting", () => {

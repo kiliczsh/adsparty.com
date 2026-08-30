@@ -10,8 +10,10 @@ import {
   hardReject,
   packagingClaimable,
   policyReject,
+  providerGenerationDuration,
   promptDuration,
   sourceVideoDuration,
+  videoProvider,
   validAdminBearer,
   validClipId,
   validMessage,
@@ -21,6 +23,13 @@ import {
 } from "./core";
 import { assertTestStripe, checkout, webhook } from "./billing";
 import type { Env, GenerationMessage } from "./types";
+import {
+  getWiroTaskDetail,
+  submitWiroTask,
+  wiroRunInput,
+  wiroTaskState,
+  wiroVideoOutput,
+} from "./wiro";
 export { Station, MediaPackager };
 const JSON_HEADERS = {
   "content-type": "application/json; charset=utf-8",
@@ -415,7 +424,7 @@ async function handle(req: Request, env: Env) {
         "SELECT id,user,msg,status,rejection_code,job_id,created_at,seen_at,generating_at,ready_at,aired_at,failed_at FROM messages ORDER BY CASE WHEN status IN ('queued','seen','generating','ready') THEN 0 ELSE 1 END, CASE WHEN status IN ('queued','seen','generating','ready') THEN id END ASC, id DESC LIMIT 50",
       ).all(),
       env.DB.prepare(
-        "SELECT id,fal_request_id,status,expanded_prompt,created_at,started_at,ended_at,retry_count,error FROM generation_jobs ORDER BY created_at DESC LIMIT 30",
+        "SELECT id,fal_request_id,provider,status,expanded_prompt,created_at,started_at,ended_at,retry_count,error FROM generation_jobs ORDER BY created_at DESC LIMIT 30",
       ).all(),
     ]);
     return json({ messages: messages.results, jobs: jobs.results });
@@ -437,33 +446,78 @@ async function handle(req: Request, env: Env) {
     const bad = method(req, ["GET"]);
     if (bad) return bad;
     const job = await env.DB.prepare(
-      "SELECT id,fal_request_id,status,expanded_prompt FROM generation_jobs WHERE id=?",
+      "SELECT id,fal_request_id,provider,status,expanded_prompt FROM generation_jobs WHERE id=?",
     )
       .bind(providerStatus[1])
       .first<{
         id: string;
         fal_request_id: string | null;
+        provider: string;
         status: string;
         expanded_prompt: string;
       }>();
     if (!job) return json({ error: "job_not_found" }, 404);
-    if (!job.fal_request_id || !env.FAL_KEY)
-      return json({ job_status: job.status, provider_status: null });
-    const response = await fetch(
-      falQueueRequestUrl(env.FAL_MODEL, job.fal_request_id, "/status?logs=0"),
-      { headers: { authorization: `Key ${env.FAL_KEY}` } },
-    );
-    if (!response.ok)
+    const provider = videoProvider(job.provider);
+    if (
+      !job.fal_request_id ||
+      (provider === "fal" && !env.FAL_KEY) ||
+      (provider === "wiro" && (!env.WIRO_API_KEY || !env.WIRO_API_SECRET))
+    )
       return json({
+        provider,
+        job_status: job.status,
+        provider_status: null,
+      });
+    let providerState = "UNKNOWN",
+      queuePosition: number | null = null,
+      providerHttpStatus = 200;
+    try {
+      if (provider === "wiro") {
+        const task = await getWiroTaskDetail(job.fal_request_id, {
+          apiKey: env.WIRO_API_KEY!,
+          apiSecret: env.WIRO_API_SECRET!,
+        });
+        providerState = task.status;
+      } else {
+        const response = await fetch(
+          falQueueRequestUrl(
+            env.FAL_MODEL,
+            job.fal_request_id,
+            "/status?logs=0",
+          ),
+          { headers: { authorization: `Key ${env.FAL_KEY}` } },
+        );
+        providerHttpStatus = response.status;
+        if (!response.ok)
+          return json({
+            provider,
+            job_status: job.status,
+            provider_status: "UNAVAILABLE",
+            provider_http_status: response.status,
+            queue_position: null,
+          });
+        const result = await response.json<any>();
+        providerState = String(result.status || "UNKNOWN");
+        queuePosition = Number.isFinite(result.queue_position)
+          ? result.queue_position
+          : null;
+      }
+    } catch (error) {
+      const status = String(error).match(/wiro_http_(\d+)/)?.[1];
+      return json({
+        provider,
         job_status: job.status,
         provider_status: "UNAVAILABLE",
-        provider_http_status: response.status,
+        provider_http_status: status ? Number(status) : null,
         queue_position: null,
       });
-    const result = await response.json<any>(),
-      provider = String(result.status || "UNKNOWN");
+    }
     let resumed = false;
-    if (provider === "COMPLETED" && job.status === "submitted") {
+    const completed =
+      provider === "wiro"
+        ? wiroTaskState(providerState) === "completed"
+        : providerState === "COMPLETED";
+    if (completed && job.status === "submitted") {
       const rows = await env.DB.prepare(
         "SELECT id,user,msg,created_at FROM messages WHERE job_id=? ORDER BY id LIMIT 4",
       )
@@ -477,6 +531,7 @@ async function handle(req: Request, env: Env) {
           prompt: job.expanded_prompt,
           chatText: rows.results.map((x) => `${x.user}: ${x.msg}`).join(" · "),
           phase: "poll",
+          provider,
           falRequestId: job.fal_request_id,
           attempt: 0,
         } satisfies GenerationMessage);
@@ -487,12 +542,11 @@ async function handle(req: Request, env: Env) {
       }
     }
     return json({
+      provider,
       job_status: job.status,
-      provider_status: provider,
-      provider_http_status: response.status,
-      queue_position: Number.isFinite(result.queue_position)
-        ? result.queue_position
-        : null,
+      provider_status: providerState,
+      provider_http_status: providerHttpStatus,
+      queue_position: queuePosition,
       resumed,
     });
   }
@@ -601,13 +655,14 @@ async function handle(req: Request, env: Env) {
       clip.generation_job_id
     ) {
       const job = await env.DB.prepare(
-        "SELECT id,fal_request_id,expanded_prompt FROM generation_jobs WHERE id=?",
+        "SELECT id,fal_request_id,expanded_prompt,provider FROM generation_jobs WHERE id=?",
       )
         .bind(clip.generation_job_id)
         .first<{
           id: string;
           fal_request_id: string | null;
           expanded_prompt: string;
+          provider: "fal" | "wiro";
         }>();
       if (!job?.fal_request_id)
         return json({ error: "clip_not_repairable" }, 409);
@@ -642,6 +697,7 @@ async function handle(req: Request, env: Env) {
         prompt: job.expanded_prompt,
         chatText: rows.results.map((x) => `${x.user}: ${x.msg}`).join(" · "),
         phase: "poll",
+        provider: videoProvider(job.provider),
         falRequestId: job.fal_request_id,
         attempt: 0,
       } satisfies GenerationMessage);
@@ -719,7 +775,12 @@ async function handle(req: Request, env: Env) {
       stripe = "live_key_rejected";
     }
     return json({
+      video_provider: videoProvider(env.VIDEO_PROVIDER),
       fal: env.FAL_KEY ? "configured" : "missing_key",
+      wiro:
+        env.WIRO_API_KEY && env.WIRO_API_SECRET
+          ? "configured"
+          : "missing_credentials",
       media_packager:
         env.MEDIA_PACKAGER && env.PACKAGER_TOKEN
           ? "configured"
@@ -763,7 +824,7 @@ async function handle(req: Request, env: Env) {
 async function processGeneration(msg: Message<GenerationMessage>, env: Env) {
   const x = msg.body;
   const job = await env.DB.prepare(
-    "SELECT status,fal_request_id,retry_count,started_at FROM generation_jobs WHERE id=?",
+    "SELECT status,fal_request_id,retry_count,started_at,provider FROM generation_jobs WHERE id=?",
   )
     .bind(x.jobId)
     .first<any>();
@@ -805,6 +866,14 @@ async function processGeneration(msg: Message<GenerationMessage>, env: Env) {
   ) {
     await env.GENERATION_QUEUE.send(x, { delaySeconds: 30 });
     msg.ack();
+    return;
+  }
+  const provider = videoProvider(
+    job.provider || x.provider || env.VIDEO_PROVIDER,
+  );
+  x.provider = provider;
+  if (provider === "wiro") {
+    await processWiroGeneration(msg, env, x, job);
     return;
   }
   if (!env.FAL_KEY) {
@@ -943,12 +1012,178 @@ async function processGeneration(msg: Message<GenerationMessage>, env: Env) {
     msg.ack();
     return;
   }
-  const sourceAt = Math.floor(Date.now() / 1000),
-    sourceDuration = sourceVideoDuration(
-      result.video?.duration,
-      x.prompt,
-      env.FAL_DURATION,
+  const sourceDuration = sourceVideoDuration(
+    result.video?.duration,
+    x.prompt,
+    env.FAL_DURATION,
+  );
+  await completeGenerationSource(msg, env, x, job, url, sourceDuration);
+}
+async function processWiroGeneration(
+  msg: Message<GenerationMessage>,
+  env: Env,
+  x: GenerationMessage,
+  job: any,
+) {
+  if (!env.WIRO_API_KEY || !env.WIRO_API_SECRET) {
+    await failJob(env, x, "wiro_not_configured");
+    msg.ack();
+    return;
+  }
+  assertTestStripe(env);
+  if (!x.falRequestId && job.fal_request_id)
+    x.falRequestId = job.fal_request_id;
+  const credentials = {
+    apiKey: env.WIRO_API_KEY,
+    apiSecret: env.WIRO_API_SECRET,
+  };
+  if (!x.falRequestId) {
+    const now = Math.floor(Date.now() / 1000);
+    if (job.status === "submitting" && Number(job.started_at) > now - 120) {
+      await env.GENERATION_QUEUE.send(x, { delaySeconds: 15 });
+      msg.ack();
+      return;
+    }
+    const claim = await env.DB.prepare(
+      "UPDATE generation_jobs SET status='submitting',started_at=? WHERE id=? AND (status='created' OR (status='submitting' AND started_at<?)) RETURNING id",
+    )
+      .bind(now, x.jobId, now - 120)
+      .first();
+    if (!claim) {
+      await env.GENERATION_QUEUE.send(x, { delaySeconds: 15 });
+      msg.ack();
+      return;
+    }
+    const duration = providerGenerationDuration("wiro", env.FAL_DURATION);
+    let submission;
+    try {
+      submission = await submitWiroTask(
+        wiroRunInput(
+          x.prompt,
+          duration,
+          env.WIRO_RESOLUTION,
+          env.WIRO_RATIO,
+          env.WIRO_SEED,
+        ),
+        credentials,
+      );
+    } catch {
+      await failJob(env, x, "wiro_submit_failed");
+      msg.ack();
+      return;
+    }
+    await env.DB.batch([
+      env.DB.prepare(
+        "UPDATE generation_jobs SET status='submitted',fal_request_id=?,started_at=? WHERE id=? AND fal_request_id IS NULL",
+      ).bind(submission.taskid, now, x.jobId),
+      env.DB.prepare(
+        "UPDATE messages SET status='generating',generating_at=? WHERE job_id=? AND status='seen'",
+      ).bind(now, x.jobId),
+    ]);
+    await env.GENERATION_QUEUE.send(
+      {
+        ...x,
+        phase: "poll",
+        provider: "wiro",
+        falRequestId: submission.taskid,
+        attempt: 0,
+      },
+      { delaySeconds: 15 },
     );
+    console.log(
+      JSON.stringify({
+        event: "wiro_submitted",
+        job_id: x.jobId,
+        task_id: submission.taskid,
+        duration,
+      }),
+    );
+    msg.ack();
+    return;
+  }
+  let task;
+  try {
+    task = await getWiroTaskDetail(x.falRequestId, credentials);
+  } catch {
+    if ((x.attempt || 0) > 80) {
+      await failJob(env, x, "wiro_status_unavailable");
+      msg.ack();
+      return;
+    }
+    await env.GENERATION_QUEUE.send(
+      { ...x, attempt: (x.attempt || 0) + 1 },
+      { delaySeconds: 15 },
+    );
+    msg.ack();
+    return;
+  }
+  let state;
+  try {
+    state = wiroTaskState(task.status);
+  } catch {
+    await failJob(env, x, "wiro_unknown_status");
+    msg.ack();
+    return;
+  }
+  if (state === "cancelled") {
+    await failJob(env, x, "wiro_task_cancelled");
+    msg.ack();
+    return;
+  }
+  if (state === "running") {
+    if ((x.attempt || 0) > 80) {
+      await failJob(env, x, "wiro_poll_timeout");
+      msg.ack();
+      return;
+    }
+    await env.DB.prepare(
+      "UPDATE generation_jobs SET started_at=? WHERE id=? AND status='submitted'",
+    )
+      .bind(Math.floor(Date.now() / 1000), x.jobId)
+      .run();
+    await env.GENERATION_QUEUE.send(
+      { ...x, attempt: (x.attempt || 0) + 1 },
+      { delaySeconds: 15 },
+    );
+    msg.ack();
+    return;
+  }
+  if (
+    await env.DB.prepare(
+      "SELECT 1 FROM generation_jobs WHERE id=? AND status='failed'",
+    )
+      .bind(x.jobId)
+      .first()
+  ) {
+    msg.ack();
+    return;
+  }
+  let url: string;
+  try {
+    url = wiroVideoOutput(task).url;
+  } catch {
+    await failJob(env, x, "wiro_result_missing_video");
+    msg.ack();
+    return;
+  }
+  await completeGenerationSource(
+    msg,
+    env,
+    x,
+    job,
+    url,
+    providerGenerationDuration("wiro", env.FAL_DURATION),
+  );
+}
+async function completeGenerationSource(
+  msg: Message<GenerationMessage>,
+  env: Env,
+  x: GenerationMessage,
+  job: any,
+  url: string,
+  sourceDuration: number,
+) {
+  const sourceAt = Math.floor(Date.now() / 1000);
   await env.DB.prepare(
     "INSERT OR IGNORE INTO clips(generation_job_id,prompt,chat_text,generated_at,duration,source,ready) VALUES(?,?,?,?,?,'generated',0)",
   )

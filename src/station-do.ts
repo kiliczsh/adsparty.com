@@ -4,10 +4,12 @@ import {
   expireBible,
   knownLikeTarget,
   playlist,
+  providerGenerationDuration,
   publicAttribution,
   reconstructPlaylistWindow,
   stationCadenceMs,
   updateBible,
+  videoProvider,
   type Bible,
   type ChatCandidate,
 } from "./core";
@@ -218,7 +220,7 @@ export class Station extends DurableObject<Env> {
       console.log(JSON.stringify({ event: "bootstrap_insert" }));
     }
     const stale = await this.env.DB.prepare(
-      "SELECT id,status,fal_request_id,expanded_prompt FROM generation_jobs WHERE (status IN ('submitted','source_ready') AND started_at<?) OR (status='packaging' AND started_at<?) ORDER BY created_at LIMIT 2",
+      "SELECT id,status,fal_request_id,expanded_prompt,provider FROM generation_jobs WHERE (status IN ('submitted','source_ready') AND started_at<?) OR (status='packaging' AND started_at<?) ORDER BY created_at LIMIT 2",
     )
       .bind(now - 90, now - 600)
       .all<{
@@ -226,6 +228,7 @@ export class Station extends DurableObject<Env> {
         status: string;
         fal_request_id: string | null;
         expanded_prompt: string;
+        provider: "fal" | "wiro";
       }>();
     for (const job of stale.results) {
       const claimed = await this.env.DB.prepare(
@@ -252,6 +255,7 @@ export class Station extends DurableObject<Env> {
         prompt: job.expanded_prompt,
         chatText: rows.results.map((x) => `${x.user}: ${x.msg}`).join(" · "),
         phase: "poll",
+        provider: videoProvider(job.provider),
         falRequestId: job.fal_request_id || undefined,
         attempt: 0,
       } satisfies GenerationMessage);
@@ -272,14 +276,11 @@ export class Station extends DurableObject<Env> {
       const rows = await this.env.DB.prepare(
         "SELECT id,user,msg,created_at FROM messages WHERE status='queued' ORDER BY id LIMIT 20",
       ).all<ChatCandidate>();
-      const duration =
-        Number(
-          await this.env.DB.prepare(
-            "SELECT value FROM settings WHERE key='generation_duration'",
-          ).first("value"),
-        ) === 10
-          ? 10
-          : 5;
+      const provider = videoProvider(this.env.VIDEO_PROVIDER);
+      const configuredDuration = await this.env.DB.prepare(
+        "SELECT value FROM settings WHERE key='generation_duration'",
+      ).first("value");
+      const duration = providerGenerationDuration(provider, configuredDuration);
       const decision = await direct(rows.results, s.bible, this.env, duration);
       if (decision.selected.length) {
         const ids = decision.selected.map((x) => x.id);
@@ -289,8 +290,8 @@ export class Station extends DurableObject<Env> {
             `UPDATE messages SET status='seen',seen_at=?,job_id=? WHERE id IN (${ids.map(() => "?").join(",")}) AND status='queued'`,
           ).bind(now, jobId, ...ids),
           this.env.DB.prepare(
-            "INSERT INTO generation_jobs(id,status,expanded_prompt,created_at) VALUES(?,?,?,?)",
-          ).bind(jobId, "created", decision.expandedPrompt, now),
+            "INSERT INTO generation_jobs(id,status,expanded_prompt,created_at,provider) VALUES(?,?,?,?,?)",
+          ).bind(jobId, "created", decision.expandedPrompt, now, provider),
         ]);
         await this.env.GENERATION_QUEUE.send({
           jobId,
@@ -298,6 +299,7 @@ export class Station extends DurableObject<Env> {
           selected: decision.selected,
           prompt: decision.expandedPrompt,
           chatText: decision.chatText,
+          provider,
         } satisfies GenerationMessage);
         s.inFlight++;
         console.log(
