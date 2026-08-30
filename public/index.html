@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width,initial-scale=1,viewport-fit=cover"
+    />
+    <title>Sonsuz televizyon</title>
+    <meta
+      id="description"
+      name="description"
+      content="Sohbetin yönettiği sonsuz bir televizyon kanalı."
+    />
+    <link rel="stylesheet" href="/styles.css" />
+    <script
+      src="https://cdn.jsdelivr.net/npm/hls.js@1.6.13/dist/hls.min.js"
+      integrity="sha384-z+tuLqMWl1/cPv7O+39RO0EURSNvorimpcCaMgeNwU+qFBx+AlUIl7jaAwg0cYil"
+      crossorigin="anonymous"
+      defer
+    ></script>
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <main id="station">
+      <section id="screen">
+        <video id="video" muted autoplay playsinline></video>
+        <div class="noise"></div>
+        <header><h1 id="brand"></h1></header>
+        <button id="liveEdge" type="button" aria-label="En güncel yayına dön">
+          <span aria-hidden="true"></span>REC
+        </button>
+        <aside id="onair">
+          <strong id="onairLabel">YAYINDA</strong><b id="liveMode">CANLI</b
+          ><span id="onairText">kanal hazırlanıyor</span
+          ><small id="airAge"></small
+          ><small id="viewers">0 aktif izleyici</small>
+        </aside>
+        <div id="splash" role="button" tabindex="0">
+          <div>
+            <strong id="splashTitle">İZLEMEK İÇİN TIKLA</strong
+            ><span id="splashBody">Bu kanal gürültülü ve biraz çılgın.</span
+            ><small id="splashHint"
+              >Sesi açıp izlemek için herhangi bir yere tıkla.</small
+            >
+          </div>
+        </div>
+        <div id="controls">
+          <button id="mute" aria-label="Sesi aç veya kapat">🔇</button
+          ><button id="heart" aria-label="Kalp gönder">
+            ♥ <span id="likes">0</span></button
+          ><button id="fullscreen" aria-label="Tam ekrana geç">⛶</button
+          ><button
+            id="chatToggle"
+            aria-label="Sohbeti daralt"
+            aria-expanded="true"
+          >
+            SOHBET ◀
+          </button>
+          <select id="language" aria-label="Dil seçimi">
+            <option value="tr">TR</option>
+            <option value="en">EN</option>
+          </select>
+          <div id="props">
+            <b id="continuityLabel">SÜREKLİLİK</b
+            ><span id="propList">parazit</span>
+          </div>
+        </div>
+        <div id="hearts"></div>
+      </section>
+      <aside id="chat">
+        <div class="chatTitle">
+          <b id="chatTitle">SOHBET</b
+          ><span id="chatSubtitle">YAYINI SEN YÖNET</span>
+        </div>
+        <div id="messages" aria-live="polite"></div>
+        <form id="chatForm">
+          <label
+            ><span id="usernameLabel" class="labelText">USERNAME</span>
+            <span id="nickCount">0/18</span
+            ><input
+              id="nick"
+              maxlength="18"
+              pattern="[A-Za-z0-9_-]+"
+              autocomplete="nickname"
+              required /></label
+          ><label
+            ><span id="messageLabel" class="labelText">MESAJ</span>
+            <textarea
+              id="msg"
+              maxlength="200"
+              placeholder="sırada ne yayınlansın?"
+              required
+            ></textarea>
+          </label>
+          <div id="turnstileWidget"></div>
+          <small id="verifyNote"></small
+          ><button id="sendButton" type="submit">GÖNDER ▶</button>
+        </form>
+        <footer>
+          <a
+            href="https://x.com/kiliczsh"
+            target="_blank"
+            rel="noopener noreferrer"
+            >x.com/kiliczsh</a
+          >
+          <a
+            href="https://github.com/kiliczsh/adsparty.com"
+            target="_blank"
+            rel="noopener noreferrer"
+            >github.com/kiliczsh/adsparty.com</a
+          >
+          <a href="https://x.com/fal" target="_blank" rel="noopener noreferrer"
+            >x.com/fal</a
+          >
+        </footer>
+      </aside>
+    </main>
+  </body>
+</html>
