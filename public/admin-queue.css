@@ -4,20 +4,28 @@
   gap: 12px;
   margin-top: 12px;
 }
+.primaryQueues {
+  margin-top: 0;
+}
 .queuePanel {
   min-width: 0;
   padding: 16px;
 }
 .queuePanel ol {
-  max-height: 360px;
+  max-height: 340px;
   overflow: auto;
   margin: 6px 0 0;
   padding: 0;
   list-style: none;
+  scrollbar-color: var(--line-strong) transparent;
+  scrollbar-width: thin;
 }
 .queuePanel li {
   padding: 10px 2px;
-  border-bottom: 1px solid #20232a;
+  border-bottom: 1px solid #202620;
+}
+.queuePanel li:last-child {
+  border-bottom: 0;
 }
 .queuePanel li > div {
   display: grid;
@@ -28,7 +36,7 @@
 .queuePanel b,
 .queuePanel em,
 .queuePanel small {
-  font-family: ui-monospace, monospace;
+  font-family: ui-monospace, SFMono-Regular, monospace;
 }
 .queuePanel b {
   overflow: hidden;
@@ -38,7 +46,7 @@
   white-space: nowrap;
 }
 .queuePanel em {
-  color: var(--green);
+  color: var(--success);
   font-size: 9px;
   font-style: normal;
   text-transform: uppercase;
@@ -51,12 +59,12 @@
   display: -webkit-box;
   margin: 7px 0 4px;
   overflow: hidden;
-  color: #b8bdc6;
+  color: #b7c0ba;
   font-size: 11px;
   line-height: 1.45;
   overflow-wrap: anywhere;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 2;
 }
 .queuePanel li > .messageActions {
   display: flex;
@@ -66,30 +74,37 @@
   margin-top: 7px;
 }
 .messageActions button {
-  padding: 5px 8px;
-  font:
-    650 9px ui-monospace,
-    monospace;
+  min-height: 28px;
+  padding: 4px 8px;
+  font-size: 9px;
+  font-weight: 650;
 }
 .queuePanel .state-failed em,
 .queuePanel .state-rejected em {
-  color: var(--red);
+  color: var(--danger);
 }
 .queuePanel .state-aired em,
 .queuePanel .state-ready em {
-  color: var(--amber);
-}
-.clipPanel {
-  margin-top: 12px;
+  color: var(--warning);
 }
 .clipPanel ol {
-  max-height: 420px;
+  max-height: none;
+}
+[data-tab-panel="queue"] .queuePanel ol,
+[data-tab-panel="library"] .queuePanel ol {
+  height: calc(100dvh - 245px);
+  max-height: none;
 }
 @media (max-width: 760px) {
   .queueGrid {
     grid-template-columns: 1fr;
   }
   .queuePanel ol {
-    max-height: 300px;
+    max-height: none;
+  }
+  [data-tab-panel="queue"] .queuePanel ol,
+  [data-tab-panel="library"] .queuePanel ol {
+    height: auto;
+    overflow: visible;
   }
 }

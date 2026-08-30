@@ -14,11 +14,27 @@ let poll = null,
 function text(selector, value) {
   $(selector).textContent = String(value ?? "—");
 }
+function selectAdminTab(name, remember = true) {
+  const allowed = ["overview", "queue", "library", "settings"],
+    selected = allowed.includes(name) ? name : "overview";
+  for (const button of document.querySelectorAll("#adminTabs [data-tab]")) {
+    const active = button.dataset.tab === selected;
+    button.setAttribute("aria-selected", String(active));
+    button.tabIndex = active ? 0 : -1;
+  }
+  for (const panel of document.querySelectorAll("[data-tab-panel]"))
+    panel.hidden = panel.dataset.tabPanel !== selected;
+  if (remember) localStorage.setItem("admin_tab", selected);
+}
 function setConnected(value) {
   connected = value;
   $("#login").hidden = value;
   $("#console").hidden = !value;
   $("#disconnect").hidden = !value;
+  $("#adminTabs").hidden = !value;
+  $("#controlTitle").hidden = value;
+  if (value)
+    selectAdminTab(localStorage.getItem("admin_tab") || "overview", false);
   if (value && !poll) poll = setInterval(refresh, 5000);
   if (!value && poll) {
     clearInterval(poll);
@@ -442,6 +458,26 @@ async function stationAction(action) {
 $("#pause").addEventListener("click", () => stationAction("pause"));
 $("#resume").addEventListener("click", () => stationAction("resume"));
 $("#refresh").addEventListener("click", refresh);
+$("#adminTabs").addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-tab]");
+  if (button) selectAdminTab(button.dataset.tab);
+});
+$("#adminTabs").addEventListener("keydown", (event) => {
+  if (!event.key.startsWith("Arrow")) return;
+  const tabs = [...document.querySelectorAll("#adminTabs [data-tab]")],
+    current = tabs.findIndex(
+      (tab) => tab.getAttribute("aria-selected") === "true",
+    ),
+    direction =
+      event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+  if (!direction) return;
+  event.preventDefault();
+  const next = tabs[(current + direction + tabs.length) % tabs.length];
+  selectAdminTab(next.dataset.tab);
+  next.focus();
+});
+for (const button of document.querySelectorAll(".tabRefresh"))
+  button.addEventListener("click", refresh);
 $("#promptQueue").addEventListener("click", async (e) => {
   const button = e.target.closest("button[data-message-id]");
   if (!button) return;

@@ -13,10 +13,24 @@
     <script src="/admin.js" defer></script>
   </head>
   <body>
-    <header>
-      <a href="/" aria-label="Back to station">← BACK</a
-      ><span>STATION CONTROL</span
-      ><button id="disconnect" hidden>DISCONNECT</button>
+    <header class="topbar">
+      <a href="/" aria-label="Back to station">← Station</a>
+      <strong id="controlTitle">Control room</strong>
+      <nav id="adminTabs" aria-label="Control room sections" hidden>
+        <button type="button" data-tab="overview" aria-selected="true">
+          Overview
+        </button>
+        <button type="button" data-tab="queue" aria-selected="false">
+          Queue
+        </button>
+        <button type="button" data-tab="library" aria-selected="false">
+          Library
+        </button>
+        <button type="button" data-tab="settings" aria-selected="false">
+          Settings
+        </button>
+      </nav>
+      <button id="disconnect" class="quiet" hidden>Sign out</button>
     </header>
     <main>
       <section id="login" class="panel login">
@@ -60,180 +74,219 @@
       </section>
 
       <div id="console" hidden>
-        <section class="hero panel">
-          <div>
-            <p class="eyebrow">AUTHORITATIVE STATION STATE</p>
-            <h1 id="stationState">CONNECTING</h1>
-            <p id="nowPlaying">Waiting for station status…</p>
-          </div>
-          <div class="actions">
-            <button id="pause" class="danger">PAUSE GENERATION</button
-            ><button id="resume">RESUME GENERATION</button
-            ><button id="refresh">REFRESH</button>
-          </div>
-        </section>
-
-        <section class="metrics" aria-label="Station metrics">
-          <article><b id="viewers">0</b><span>VIEWERS</span></article>
-          <article><b id="buffer">0</b><span>BUFFER CLIPS</span></article>
-          <article><b id="generating">0</b><span>GENERATING</span></article>
-          <article><b id="total">0</b><span>TOTAL CLIPS</span></article>
-        </section>
-
-        <section class="integrations" aria-label="Integration readiness">
-          <article>
-            <span>VIDEO PROVIDER</span><b id="videoProviderState">—</b>
-          </article>
-          <article><span>WIRO VIDEO</span><b id="wiroState">—</b></article>
-          <article>
-            <span>MEDIA PACKAGER</span><b id="packagerState">—</b>
-          </article>
-          <article><span>TURNSTILE</span><b id="turnstileState">—</b></article>
-          <article><span>DIRECTOR</span><b id="directorState">—</b></article>
-          <article><span>STRIPE</span><b id="stripeState">—</b></article>
-        </section>
-
-        <section class="grid">
-          <article class="panel">
-            <div class="panelTitle">
-              <h2>GENERATION</h2>
-              <span>Applies to new prompts</span>
+        <section class="tabPanel" data-tab-panel="overview">
+          <div class="hero" aria-labelledby="stationState">
+            <div class="stationSummary">
+              <span class="statusDot" aria-hidden="true"></span>
+              <div>
+                <h1 id="stationState">CONNECTING</h1>
+                <p id="nowPlaying">Waiting for station status…</p>
+              </div>
             </div>
-            <form id="generationForm" class="toggles">
-              <label
-                >CLIP LENGTH<select id="generationDuration" name="duration">
-                  <option value="5">5 seconds</option>
-                  <option value="10">10 seconds</option>
-                </select></label
-              >
-              <button>SAVE LENGTH</button>
-            </form>
-            <p id="generationNote" class="note" role="status"></p>
-          </article>
-
-          <article class="panel">
-            <div class="panelTitle">
-              <h2>MODERATION POLICY</h2>
-              <span>Changes apply immediately</span>
+            <div class="actions">
+              <button id="pause" class="danger">Pause</button
+              ><button id="resume">Resume</button
+              ><button id="refresh" class="quiet">Refresh</button>
             </div>
-            <form id="policyForm" class="toggles">
-              <label
-                ><input name="nsfw" type="checkbox" /><span
-                  >Allow NSFW</span
-                ></label
-              >
-              <label
-                ><input name="copyrighted_characters" type="checkbox" /><span
-                  >Allow copyrighted characters</span
-                ></label
-              >
-              <label
-                ><input name="brands" type="checkbox" /><span
-                  >Allow brands</span
-                ></label
-              >
-              <label
-                ><input name="public_figures" type="checkbox" /><span
-                  >Allow public figures</span
-                ></label
-              >
-              <label
-                ><input name="graphic_violence" type="checkbox" /><span
-                  >Allow graphic violence</span
-                ></label
-              >
-              <label
-                ><input name="non_graphic_violence" type="checkbox" /><span
-                  >Allow non-graphic violence</span
-                ></label
-              >
-              <button>SAVE POLICY</button>
-            </form>
-            <p id="policyNote" class="note" role="status"></p>
-          </article>
+          </div>
 
-          <article class="panel">
+          <div class="metrics" aria-label="Station metrics">
+            <article><b id="viewers">0</b><span>VIEWERS</span></article>
+            <article><b id="buffer">0</b><span>BUFFER CLIPS</span></article>
+            <article><b id="generating">0</b><span>GENERATING</span></article>
+            <article><b id="total">0</b><span>TOTAL CLIPS</span></article>
+          </div>
+
+          <section class="queuePanel flowPanel">
             <div class="panelTitle">
-              <h2>LIVE FLOW</h2>
-              <span id="sequence">SEQUENCE —</span>
+              <h2>Live flow</h2>
+              <span id="sequence">Sequence —</span>
             </div>
             <ol id="flow"></ol>
-          </article>
+          </section>
         </section>
 
-        <section class="queueGrid">
-          <article class="panel queuePanel">
+        <section class="tabPanel" data-tab-panel="queue" hidden>
+          <div class="sectionHeading">
+            <div>
+              <h1>Queue</h1>
+              <p>Review prompts and generation progress.</p>
+            </div>
+            <button class="quiet tabRefresh" type="button">Refresh</button>
+          </div>
+          <div class="queueGrid primaryQueues" aria-label="Active work">
+            <article class="queuePanel">
+              <div class="panelTitle">
+                <h2>Prompt queue</h2>
+                <span>Oldest active first</span>
+              </div>
+              <ol id="promptQueue"></ol>
+            </article>
+            <article class="queuePanel">
+              <div class="panelTitle">
+                <h2>Generation jobs</h2>
+                <span>Provider state</span>
+              </div>
+              <ol id="jobQueue"></ol>
+            </article>
+          </div>
+        </section>
+
+        <section class="tabPanel" data-tab-panel="library" hidden>
+          <div class="sectionHeading">
+            <div>
+              <h1>Library</h1>
+              <p>Manage recent media and live rotation.</p>
+            </div>
+            <button class="quiet tabRefresh" type="button">Refresh</button>
+          </div>
+          <div class="queuePanel clipPanel">
             <div class="panelTitle">
-              <h2>PROMPT QUEUE</h2>
-              <span>Oldest active requests first</span>
+              <h2>Video library</h2>
+              <span>Recent media</span>
             </div>
-            <ol id="promptQueue"></ol>
-          </article>
-          <article class="panel queuePanel">
-            <div class="panelTitle">
-              <h2>GENERATION JOBS</h2>
-              <span>Director output and provider state</span>
-            </div>
-            <ol id="jobQueue"></ol>
-          </article>
+            <ol id="clipQueue"></ol>
+          </div>
         </section>
 
-        <section class="panel queuePanel clipPanel">
-          <div class="panelTitle">
-            <h2>VIDEO LIBRARY</h2>
-            <span>Disable hides a video without deleting its media</span>
+        <section class="tabPanel" data-tab-panel="settings" hidden>
+          <div class="sectionHeading">
+            <div>
+              <h1>Settings</h1>
+              <p>Providers, policy, access and diagnostics.</p>
+            </div>
           </div>
-          <ol id="clipQueue"></ol>
-        </section>
+          <div class="settingsBody">
+            <section class="integrations" aria-label="Integration readiness">
+              <article>
+                <span>Provider</span><b id="videoProviderState">—</b>
+              </article>
+              <article><span>Wiro</span><b id="wiroState">—</b></article>
+              <article>
+                <span>Packager</span><b id="packagerState">—</b>
+              </article>
+              <article>
+                <span>Turnstile</span><b id="turnstileState">—</b>
+              </article>
+              <article>
+                <span>Director</span><b id="directorState">—</b>
+              </article>
+              <article><span>Stripe</span><b id="stripeState">—</b></article>
+            </section>
 
-        <section class="panel adminUsers">
-          <div class="panelTitle">
-            <h2>ADMIN USERS</h2>
-            <span id="signedInAs">SIGNED IN</span>
-          </div>
-          <form id="adminUserForm" class="adminUserForm">
-            <label
-              >USERNAME<input
-                id="newAdminUsername"
-                type="text"
-                autocomplete="off"
-                minlength="3"
-                maxlength="32"
-                pattern="[A-Za-z0-9_-]+"
-                required /></label
-            ><label
-              >TEMPORARY PASSWORD<input
-                id="newAdminPassword"
-                type="password"
-                autocomplete="new-password"
-                minlength="12"
-                maxlength="128"
-                required /></label
-            ><button>ADD ADMIN</button>
-          </form>
-          <p id="adminUserNote" class="note" role="status"></p>
-          <ol id="adminUsersList"></ol>
-        </section>
+            <section class="grid settingsGrid">
+              <article>
+                <div class="panelTitle">
+                  <h2>Generation</h2>
+                  <span>New prompts</span>
+                </div>
+                <form id="generationForm" class="toggles">
+                  <label
+                    >Clip length<select id="generationDuration" name="duration">
+                      <option value="5">5 seconds</option>
+                      <option value="10">10 seconds</option>
+                    </select></label
+                  >
+                  <button>Save</button>
+                </form>
+                <p id="generationNote" class="note" role="status"></p>
+              </article>
 
-        <section class="panel diagnostics">
-          <div class="panelTitle">
-            <h2>DIAGNOSTICS</h2>
-            <span>Sanitized public state</span>
+              <article>
+                <div class="panelTitle">
+                  <h2>Moderation policy</h2>
+                  <span>Immediate</span>
+                </div>
+                <form id="policyForm" class="toggles policyToggles">
+                  <label
+                    ><input name="nsfw" type="checkbox" /><span
+                      >Allow NSFW</span
+                    ></label
+                  >
+                  <label
+                    ><input
+                      name="copyrighted_characters"
+                      type="checkbox"
+                    /><span>Copyrighted characters</span></label
+                  >
+                  <label
+                    ><input name="brands" type="checkbox" /><span
+                      >Brands</span
+                    ></label
+                  >
+                  <label
+                    ><input name="public_figures" type="checkbox" /><span
+                      >Public figures</span
+                    ></label
+                  >
+                  <label
+                    ><input name="graphic_violence" type="checkbox" /><span
+                      >Graphic violence</span
+                    ></label
+                  >
+                  <label
+                    ><input name="non_graphic_violence" type="checkbox" /><span
+                      >Non-graphic violence</span
+                    ></label
+                  >
+                  <button>Save policy</button>
+                </form>
+                <p id="policyNote" class="note" role="status"></p>
+              </article>
+            </section>
+
+            <section class="adminUsers">
+              <div class="panelTitle">
+                <h2>Admin users</h2>
+                <span id="signedInAs">Signed in</span>
+              </div>
+              <form id="adminUserForm" class="adminUserForm">
+                <label
+                  >Username<input
+                    id="newAdminUsername"
+                    type="text"
+                    autocomplete="off"
+                    minlength="3"
+                    maxlength="32"
+                    pattern="[A-Za-z0-9_-]+"
+                    required
+                /></label>
+                <label
+                  >Temporary password<input
+                    id="newAdminPassword"
+                    type="password"
+                    autocomplete="new-password"
+                    minlength="12"
+                    maxlength="128"
+                    required
+                /></label>
+                <button>Add admin</button>
+              </form>
+              <p id="adminUserNote" class="note" role="status"></p>
+              <ol id="adminUsersList"></ol>
+            </section>
+
+            <section class="diagnostics">
+              <div class="panelTitle">
+                <h2>Diagnostics</h2>
+                <span>Sanitized state</span>
+              </div>
+              <dl>
+                <div>
+                  <dt>Last error</dt>
+                  <dd id="lastError">none</dd>
+                </div>
+                <div>
+                  <dt>Buffer</dt>
+                  <dd><span id="bufferSecs">0</span> sec</dd>
+                </div>
+                <div>
+                  <dt>Chat messages</dt>
+                  <dd id="chatMessages">0</dd>
+                </div>
+              </dl>
+            </section>
           </div>
-          <dl>
-            <div>
-              <dt>LAST ERROR</dt>
-              <dd id="lastError">none</dd>
-            </div>
-            <div>
-              <dt>BUFFER SECONDS</dt>
-              <dd id="bufferSecs">0</dd>
-            </div>
-            <div>
-              <dt>CHAT MESSAGES</dt>
-              <dd id="chatMessages">0</dd>
-            </div>
-          </dl>
         </section>
       </div>
     </main>
