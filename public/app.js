@@ -352,13 +352,58 @@ function advanceDirect() {
     const recorded = nextRecordedClip();
     if (recorded) {
       prefetchMp4(recordedClips, recorded.mediaUrl);
-      playDirect(recorded, true);
+      playClip(recorded, true);
     }
     return;
   }
   const next = directQueue.shift();
   if (next) playDirect(next, true);
   else if (pendingHls) startPlayer();
+}
+async function playArchivedHls(c, force = false) {
+  if (!/^\d{6}\.ts$/.test(c?.filename || "")) return false;
+  if (currentClipId === c.clipId && currentSeg === c.filename && !force)
+    return true;
+  if (!(await preloadLiveSegment(c.filename))) return false;
+  clearDirectStall();
+  directSwitchToken++;
+  directSequence = null;
+  directCurrentClip = c;
+  directQueue = [];
+  pendingHls = false;
+  directPreparing = false;
+  currentClipId = c.clipId;
+  currentSequence = c.sequence;
+  currentSeg = c.filename;
+  setLikeClip(c.clipId);
+  if (hls) {
+    hls.destroy();
+    hls = null;
+  }
+  const source = `/live/clip/${c.filename.slice(0, 6)}.m3u8`;
+  if (window.Hls?.isSupported()) {
+    hls = new Hls({ enableWorker: true });
+    hls.loadSource(source);
+    hls.attachMedia(video);
+    hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => {}));
+    hls.on(Hls.Events.ERROR, (_, detail) => {
+      if (!detail.fatal) return;
+      hls?.destroy();
+      hls = null;
+      advanceDirect();
+    });
+  } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+    video.src = source;
+    video.load();
+    video.play().catch(() => {});
+  } else return false;
+  refreshMeta();
+  return true;
+}
+function playClip(c, force = false) {
+  if (c?.filename) return playArchivedHls(c, force);
+  if (c?.mediaUrl) return playDirect(c, force);
+  return Promise.resolve(false);
 }
 function clearDirectStall() {
   if (directStallTimer !== null) clearTimeout(directStallTimer);
@@ -586,8 +631,22 @@ async function refreshMeta() {
       const later = (m.clips || []).filter(
         (clip) => Number(clip.sequence) > directSequence,
       );
+      const archivedSequences = new Set(
+        later.filter((clip) => clip.filename).map((clip) => clip.sequence),
+      );
+      directQueue = directQueue.filter(
+        (clip) => !archivedSequences.has(clip.sequence),
+      );
       for (const clip of later) if (clip.mediaUrl) queueDirect(clip);
-      if (later.some((clip) => clip.filename)) pendingHls = true;
+      const nextArchived = later.find(
+        (clip) =>
+          clip.filename &&
+          Number(clip.clipId) !== Number(directCurrentClip?.clipId),
+      );
+      if (nextArchived) {
+        pendingHls = true;
+        pendingLiveEdgeSegment = nextArchived.filename;
+      }
       if (video.ended) advanceDirect();
     } else if (playbackMode === "live" && latest?.mediaUrl) {
       playDirect(latest);
@@ -668,17 +727,17 @@ async function goToLiveEdge() {
     setPlaybackMode("live");
     recordedClips = [];
     recordedIndex = -1;
-    if (target.mediaUrl) {
+    if (target.filename) {
+      if (!(await preloadLiveSegment(target.filename)))
+        throw new Error("live_edge_preload_failed");
+      pendingLiveEdgeSegment = target.filename;
+      startPlayer();
+    } else if (target.mediaUrl) {
       directQueue = [];
       pendingHls = false;
       prefetchMp4(liveTail, target.mediaUrl);
       if (!(await playDirect(target, true)))
         throw new Error("live_edge_playback_failed");
-    } else if (target.filename) {
-      if (!(await preloadLiveSegment(target.filename)))
-        throw new Error("live_edge_preload_failed");
-      pendingLiveEdgeSegment = target.filename;
-      startPlayer();
     } else {
       throw new Error("live_edge_unavailable");
     }
@@ -702,7 +761,9 @@ async function startRecorded(mode) {
     const meta = await fetch("/live/archive.json", { cache: "no-store" }).then(
       (response) => response.json(),
     );
-    const clips = (meta.clips || []).filter((clip) => clip.mediaUrl);
+    const clips = (meta.clips || []).filter(
+      (clip) => clip.filename || clip.mediaUrl,
+    );
     if (!clips.length) throw new Error("recordings_unavailable");
     recordedClips = clips;
     const current = clips.findIndex((clip) =>
@@ -719,7 +780,7 @@ async function startRecorded(mode) {
     const target = recordedClips[recordedIndex];
     const next = recordedClips[(recordedIndex + 1) % recordedClips.length];
     prefetchMp4(recordedClips, next?.mediaUrl || target.mediaUrl);
-    if (!(await playDirect(target, true)))
+    if (!(await playClip(target, true)))
       throw new Error("recording_playback_failed");
     button.classList.add("live-edge-confirmed");
     setTimeout(() => button.classList.remove("live-edge-confirmed"), 500);

@@ -73,6 +73,8 @@ describe("public release contract", () => {
     expect(app).toContain('fetch("/live/archive.json"');
     expect(worker).toContain('u.pathname === "/live/latest.json"');
     expect(worker).toContain('u.pathname === "/live/archive.json"');
+    expect(worker).toContain("clipPlaylist");
+    expect(worker).toContain("#EXT-X-ENDLIST");
     expect(station).toContain("ORDER BY c.generated_at DESC,c.id DESC LIMIT 3");
     expect(station).toContain(
       "ORDER BY c.generated_at DESC,c.id DESC LIMIT 30",
@@ -89,6 +91,8 @@ describe("public release contract", () => {
     expect(app).toContain("% recordedClips.length");
     expect(app).toContain("(base - 3 + clips.length) % clips.length");
     expect(app).toContain("previousRecordedClip");
+    expect(app).toContain("playArchivedHls");
+    expect(app).toContain("if (c?.filename) return playArchivedHls(c, force)");
   });
 
   it("serializes packaging on a warm dedicated standard-2 container", () => {

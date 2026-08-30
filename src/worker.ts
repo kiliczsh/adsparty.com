@@ -356,6 +356,28 @@ async function handle(req: Request, env: Env) {
     if (bad) return bad;
     return station(env).fetch("https://station/archive");
   }
+  const clipPlaylist = u.pathname.match(/^\/live\/clip\/(\d{6})\.m3u8$/);
+  if (clipPlaylist) {
+    const bad = method(req, ["GET"]);
+    if (bad) return bad;
+    const filename = `${clipPlaylist[1]}.ts`;
+    const clip = await env.DB.prepare(
+      "SELECT id,duration FROM clips WHERE ready=1 AND segment_filename=? AND r2_key IS NOT NULL",
+    )
+      .bind(filename)
+      .first<{ id: number; duration: number }>();
+    if (!clip) return new Response("Not found", { status: 404 });
+    const duration = Number(clip.duration) || 5;
+    return new Response(
+      `#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-TARGETDURATION:${Math.ceil(duration)}\n#EXT-X-MEDIA-SEQUENCE:${clip.id}\n#EXT-X-DISCONTINUITY\n#EXTINF:${duration.toFixed(2)},\n/live/${filename}\n#EXT-X-ENDLIST\n`,
+      {
+        headers: {
+          "content-type": "application/vnd.apple.mpegurl",
+          "cache-control": "no-store",
+        },
+      },
+    );
+  }
   if (/^\/live\/\d{6}\.ts$/.test(u.pathname)) {
     if (req.method !== "GET" && req.method !== "HEAD")
       return method(req, ["GET", "HEAD"])!;
