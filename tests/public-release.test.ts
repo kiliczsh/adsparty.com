@@ -47,6 +47,14 @@ describe("public release contract", () => {
     expect(index).not.toMatch(/televole/i);
   });
 
+  it("links the Wiro FastH3 integration from the viewer footer", () => {
+    const page = read("public/index.html");
+    expect(page).toContain(
+      "https://wiro.ai/models/fastvideo/fast-h3?utm_source=adsparty.com",
+    );
+    expect(page).toMatch(/>wiro<\/a/);
+  });
+
   it("keeps direct MP4 replay playback FIFO", () => {
     const app = read("public/app.js");
     expect(app).toContain("directQueue.slice(0, 6)");
