@@ -24,7 +24,7 @@ export type WiroRunInput = {
   duration: string;
   resolution: "480P" | "768P";
   ratio: "16:9" | "9:16" | "1:1" | "4:3" | "3:4" | "21:9";
-  seed: number;
+  seed?: number;
   callbackUrl?: string;
 };
 
@@ -158,27 +158,40 @@ function validateRunInput(input: WiroRunInput) {
   if (!resolutions.has(input.resolution))
     throw new Error("wiro_invalid_resolution");
   if (!ratios.has(input.ratio)) throw new Error("wiro_invalid_ratio");
-  if (!Number.isFinite(input.seed)) throw new Error("wiro_invalid_seed");
+  if (input.seed !== undefined && !Number.isFinite(input.seed))
+    throw new Error("wiro_invalid_seed");
 }
 
 export function wiroLanguageLockedPrompt(prompt: string) {
   const brief = prompt.trim();
   if (!brief) throw new Error("wiro_invalid_prompt");
-  const hasQuotedDialogue =
-    /"[^"\n]{1,240}"|“[^”\n]{1,240}”|‘[^’\n]{1,240}’/.test(brief);
+  const quotedDialogue = brief.match(
+    /"[^"\n]{1,240}"|“[^”\n]{1,240}”|‘[^’\n]{1,240}’/,
+  )?.[0];
+  const hasQuotedDialogue = Boolean(quotedDialogue);
+  const wantsTurkish =
+    /\b(türkçe|turkish|türkçe konuş|türkçe diyalog|türkçe replik)\b/i.test(
+      brief,
+    );
+  const quotedTurkish =
+    wantsTurkish || /[çğıöşüÇĞİÖŞÜ]/.test(quotedDialogue || "");
   const audioPolicy = hasQuotedDialogue
-    ? "AUDIO MODE — EXPLICIT DIALOGUE: Spoken words may be in Turkish or English only. Preserve the language explicitly requested for each quoted line. Speak only exact quoted dialogue assigned to a character."
-    : "AUDIO MODE — NO SPEECH: Generate environmental ambience and sound effects only. No human voice, intelligible words, narration, commentary, vocals, chants, whispers, or crowd speech in any language.";
+    ? quotedTurkish
+      ? "AUDIO MODE — EXACT TURKISH DIALOGUE: The only spoken language is Turkish (tr-TR). One clearly visible native speaker says each assigned quoted Turkish line exactly once with natural Istanbul pronunciation and synchronized mouth movement. Do not alter, translate, paraphrase, repeat, extend, or add words. No other voices, dialogue, narration, pseudo-language, or crowd speech. If exact Turkish cannot be produced, use non-vocal ambience instead."
+      : "AUDIO MODE — EXACT QUOTED DIALOGUE: Preserve the language of each explicitly quoted line. One clearly visible speaker says only the assigned quoted words exactly once with synchronized mouth movement. Do not alter, translate, paraphrase, repeat, extend, or add words. No other voices, dialogue, narration, pseudo-language, or crowd speech."
+    : wantsTurkish
+      ? "AUDIO MODE — TURKISH SPEECH ONLY: The only spoken language is natural Turkish (tr-TR). Use one clearly visible native speaker and create one short, scene-appropriate Turkish sentence of at most eight words, spoken exactly once with natural Istanbul pronunciation and synchronized mouth movement. No other voices, narration, repeated speech, pseudo-language, or crowd speech. If natural Turkish cannot be produced, use non-vocal ambience instead."
+      : "AUDIO MODE — NO SPEECH: Generate environmental ambience and sound effects only. No human voice, intelligible words, narration, commentary, vocals, chants, whispers, pseudo-language, or crowd speech in any language.";
   return `AUDIO LANGUAGE POLICY — HIGHEST PRIORITY: ${audioPolicy} All scene descriptions, viewer attribution, timing, camera, style, and continuity instructions are silent production directions and must never be recited. Do not add narration, translation, paraphrasing, improvisation, subtitles, or additional speech.\n\n[SILENT PRODUCTION BRIEF]\n${brief}\n[END SILENT PRODUCTION BRIEF]`;
 }
 
 export function wiroGenerationSeed(configured: unknown, jobId: string) {
+  const mode = String(configured ?? "")
+    .trim()
+    .toLowerCase();
+  if (!mode || mode === "none") return undefined;
   const fixed = Number(configured);
-  if (
-    String(configured || "").toLowerCase() !== "per-job" &&
-    Number.isFinite(fixed)
-  )
-    return fixed;
+  if (mode !== "per-job" && Number.isFinite(fixed)) return fixed;
   let hash = 2166136261;
   for (let index = 0; index < jobId.length; index++) {
     hash ^= jobId.charCodeAt(index);
@@ -192,15 +205,15 @@ export function wiroRunInput(
   duration: unknown,
   resolution: unknown = "480P",
   ratio: unknown = "16:9",
-  seed: unknown = 1000,
+  seed?: unknown,
 ): WiroRunInput {
   const input = {
     prompt,
     duration: String(duration),
     resolution: String(resolution),
     ratio: String(ratio),
-    seed: Number(seed),
   } as WiroRunInput;
+  if (seed !== undefined) input.seed = Number(seed);
   validateRunInput(input);
   return input;
 }
@@ -216,8 +229,8 @@ export async function submitWiroTask(
     duration: input.duration,
     resolution: input.resolution,
     ratio: input.ratio,
-    seed: input.seed,
   };
+  if (input.seed !== undefined) payload.seed = input.seed;
   if (input.callbackUrl) payload.callbackUrl = input.callbackUrl;
   const result = await wiroPost<WiroSubmitResponse>(
     WIRO_RUN_ENDPOINT,

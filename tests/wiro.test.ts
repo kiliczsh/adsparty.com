@@ -54,12 +54,22 @@ describe("wiro spoken-language policy", () => {
     const prompt = wiroLanguageLockedPrompt(
       'A woman says, "Bu akşam çıkalım."',
     );
-    expect(prompt).toContain("Turkish or English only");
-    expect(prompt).toContain("AUDIO MODE — EXPLICIT DIALOGUE");
+    expect(prompt).toContain("Turkish (tr-TR)");
+    expect(prompt).toContain("AUDIO MODE — EXACT TURKISH DIALOGUE");
     expect(prompt).toContain("[SILENT PRODUCTION BRIEF]");
     expect(prompt).toContain('"Bu akşam çıkalım."');
     expect(prompt).toContain("must never be recited");
     expect(prompt).toContain("Do not add narration");
+  });
+
+  it("uses a short Turkish-only speech mode when Turkish is explicitly requested", () => {
+    const prompt = wiroLanguageLockedPrompt(
+      "İstanbul Aksaray tanıtım videosu Türkçe",
+    );
+    expect(prompt).toContain("AUDIO MODE — TURKISH SPEECH ONLY");
+    expect(prompt).toContain("at most eight words");
+    expect(prompt).toContain("natural Istanbul pronunciation");
+    expect(prompt).toContain("use non-vocal ambience instead");
   });
 
   it("forbids invented voices when the scene has no quoted dialogue", () => {
@@ -80,6 +90,11 @@ describe("wiro generation seed", () => {
 
   it("retains an explicitly configured numeric seed", () => {
     expect(wiroGenerationSeed("1000", "job-one")).toBe(1000);
+  });
+
+  it("omits the seed when no seed mode is configured", () => {
+    expect(wiroGenerationSeed(undefined, "job-one")).toBeUndefined();
+    expect(wiroGenerationSeed("none", "job-one")).toBeUndefined();
   });
 });
 
@@ -138,6 +153,21 @@ describe("wiro task lifecycle", () => {
       prompt: wiroLanguageLockedPrompt(input.prompt),
       seed: String(input.seed),
     });
+  });
+
+  it("does not send a seed field when the input omits it", async () => {
+    const fetcher = vi.fn(() =>
+      response({
+        errors: [],
+        taskid: "2222",
+        socketaccesstoken: "socket-token-2",
+        result: true,
+      }),
+    );
+    const { seed: _seed, ...seedlessInput } = input;
+    await submitWiroTask(seedlessInput, credentials, fetcher as typeof fetch);
+    const [, init] = (fetcher.mock.calls as unknown as RecordedFetchCall[])[0]!;
+    expect(init.body.has("seed")).toBe(false);
   });
 
   it("polls by task id until the documented completed status", async () => {

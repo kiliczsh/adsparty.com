@@ -185,8 +185,8 @@ describe("video provider", () => {
     expect(() => videoProvider("unknown")).toThrow("invalid_video_provider");
   });
   it("locks Wiro station clips to 10 seconds", () => {
-    expect(providerGenerationDuration("wiro", 5)).toBe(10);
-    expect(providerGenerationDuration("wiro", 10)).toBe(10);
+    expect(providerGenerationDuration("wiro", 5)).toBe(5);
+    expect(providerGenerationDuration("wiro", 10)).toBe(5);
     expect(providerGenerationDuration("fal", 5)).toBe(5);
   });
 });

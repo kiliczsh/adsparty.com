@@ -80,8 +80,7 @@ export const videoProvider = (v: unknown): "fal" | "wiro" => {
 export const providerGenerationDuration = (
   provider: "fal" | "wiro",
   configuredDuration: unknown,
-): 5 | 10 =>
-  provider === "wiro" ? 10 : generationDuration(configuredDuration);
+): 5 | 10 => (provider === "wiro" ? 5 : generationDuration(configuredDuration));
 export const promptDuration = (prompt: string, fallback: unknown = 5): 5 | 10 =>
   generationDuration(prompt.match(/exactly\s+(5|10)-second/i)?.[1] ?? fallback);
 export const sourceVideoDuration = (
