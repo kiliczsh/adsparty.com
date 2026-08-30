@@ -102,6 +102,7 @@ describe("public release contract", () => {
     expect(wrangler).toContain('"instance_type": "standard-2"');
     expect(container).toContain('sleepAfter = "10m"');
     expect(worker).toContain('batch.queue === "televole-packaging"');
+    expect(worker).toContain("new FixedLengthStream(contentLength)");
     expect(station).toContain('u.pathname === "/archive-ready"');
     expect(read("media-container/server.mjs")).toContain('"content-length"');
   });

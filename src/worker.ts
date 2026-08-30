@@ -1340,14 +1340,21 @@ async function processPackaging(msg: Message<PackagingMessage>, env: Env) {
         pr.headers.get("x-media-duration") || clip.duration,
       ),
       filename = `${String(clip.id).padStart(6, "0")}.ts`,
-      key = `segments/${filename}`;
-    if (!(await env.MEDIA.head(key)))
-      await env.MEDIA.put(key, pr.body, {
+      key = `segments/${filename}`,
+      contentLength = Number(pr.headers.get("content-length"));
+    if (!Number.isSafeInteger(contentLength) || contentLength <= 0)
+      throw new Error("media_length_missing");
+    if (!(await env.MEDIA.head(key))) {
+      const fixed = new FixedLengthStream(contentLength);
+      const streaming = pr.body.pipeTo(fixed.writable);
+      await env.MEDIA.put(key, fixed.readable, {
         httpMetadata: {
           contentType: "video/mp2t",
           cacheControl: "public,max-age=31536000,immutable",
         },
       });
+      await streaming;
+    } else await pr.body.cancel();
     const finishedAt = Math.floor(Date.now() / 1000);
     await env.DB.batch([
       env.DB.prepare(
