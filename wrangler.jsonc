@@ -29,9 +29,9 @@
   "containers": [
     {
       "class_name": "MediaPackager",
-      "image": "./media-container/Dockerfile",
+      "image": "registry.cloudflare.com/63ba7ddbe8724a0a4579bf01c91c3aa8/televole-live-mediapackager@sha256:beb1a8b28e381fc74cc6de3523c556d2f5cd78c1d00574dc041744165c0e3a46",
       "max_instances": 1,
-      "instance_type": "standard-2",
+      "instance_type": "basic",
       "constraints": { "regions": ["WEUR", "EEUR"] },
     },
   ],

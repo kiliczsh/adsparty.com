@@ -98,7 +98,7 @@ describe("public release contract", () => {
     expect(app).toContain("if (c?.filename) return playArchivedHls(c, force)");
   });
 
-  it("serializes packaging on a warm dedicated standard-2 container", () => {
+  it("serializes packaging on a scale-to-zero basic container", () => {
     const wrangler = read("wrangler.jsonc");
     const container = read("src/media-container.ts");
     const worker = read("src/worker.ts");
@@ -106,8 +106,8 @@ describe("public release contract", () => {
     expect(wrangler).toContain('"binding": "PACKAGING_QUEUE"');
     expect(wrangler).toContain('"queue": "televole-packaging"');
     expect(wrangler).toContain('"max_concurrency": 1');
-    expect(wrangler).toContain('"instance_type": "standard-2"');
-    expect(container).toContain('sleepAfter = "10m"');
+    expect(wrangler).toContain('"instance_type": "basic"');
+    expect(container).toContain('sleepAfter = "10s"');
     expect(worker).toContain('batch.queue === "televole-packaging"');
     expect(worker).toContain("new FixedLengthStream(contentLength)");
     expect(station).toContain('u.pathname === "/archive-ready"');
