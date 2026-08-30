@@ -29,6 +29,8 @@ type State = {
   mediaSequence: number;
   window: Entry[];
   recentClipIds?: number[];
+  rerunCursorGeneratedAt?: number;
+  rerunCursorClipId?: number;
   paused: boolean;
   inFlight: number;
   lastError: string | null;
@@ -173,21 +175,40 @@ export class Station extends DurableObject<Env> {
       }
     }
     if (inserted === 0 && s.window.length) {
-      const playable =
-        "((c.ready=1 AND c.segment_filename IS NOT NULL AND c.r2_key IS NOT NULL) OR src.value IS NOT NULL)";
-      const previous = s.window.at(-1)?.clipId || 0;
+      const lastReplay = [...s.window]
+        .reverse()
+        .find((entry) => entry.replay && entry.clipId > 0);
+      const cursorGeneratedAt = Number(
+        s.rerunCursorGeneratedAt ?? lastReplay?.generatedAt ?? 0,
+      );
+      const cursorClipId = Number(
+        s.rerunCursorClipId ?? lastReplay?.clipId ?? 0,
+      );
+      const archived =
+        "c.ready=1 AND c.segment_filename IS NOT NULL AND c.r2_key IS NOT NULL";
       let old = await this.env.DB.prepare(
-        `SELECT c.id,c.segment_filename,c.duration,c.chat_text,c.generated_at,src.value media_url FROM clips c LEFT JOIN settings src ON src.key='clip_source:'||c.id WHERE ${playable} AND c.id>? ORDER BY c.id ASC LIMIT 1`,
+        `SELECT c.id,c.segment_filename,c.duration,c.chat_text,c.generated_at,NULL media_url FROM clips c WHERE ${archived} AND (COALESCE(c.generated_at,0)>? OR (COALESCE(c.generated_at,0)=? AND c.id>?)) ORDER BY COALESCE(c.generated_at,0) ASC,c.id ASC LIMIT 1`,
       )
-        .bind(previous)
+        .bind(cursorGeneratedAt, cursorGeneratedAt, cursorClipId)
         .first<any>();
+      if (!old)
+        old = await this.env.DB.prepare(
+          `SELECT c.id,c.segment_filename,c.duration,c.chat_text,c.generated_at,NULL media_url FROM clips c WHERE ${archived} ORDER BY COALESCE(c.generated_at,0) ASC,c.id ASC LIMIT 1`,
+        ).first<any>();
       if (!old) {
-        const liveTail = await this.env.DB.prepare(
-          `SELECT c.id,c.segment_filename,c.duration,c.chat_text,c.generated_at,src.value media_url FROM clips c LEFT JOIN settings src ON src.key='clip_source:'||c.id WHERE ${playable} ORDER BY c.generated_at DESC,c.id DESC LIMIT 3`,
-        ).all<any>();
-        old = liveTail.results.at(-1) || null;
+        old = await this.env.DB.prepare(
+          "SELECT c.id,c.segment_filename,c.duration,c.chat_text,c.generated_at,src.value media_url FROM clips c JOIN settings src ON src.key='clip_source:'||c.id WHERE src.value IS NOT NULL AND (COALESCE(c.generated_at,0)>? OR (COALESCE(c.generated_at,0)=? AND c.id>?)) ORDER BY COALESCE(c.generated_at,0) ASC,c.id ASC LIMIT 1",
+        )
+          .bind(cursorGeneratedAt, cursorGeneratedAt, cursorClipId)
+          .first<any>();
+        if (!old)
+          old = await this.env.DB.prepare(
+            "SELECT c.id,c.segment_filename,c.duration,c.chat_text,c.generated_at,src.value media_url FROM clips c JOIN settings src ON src.key='clip_source:'||c.id WHERE src.value IS NOT NULL ORDER BY COALESCE(c.generated_at,0) ASC,c.id ASC LIMIT 1",
+          ).first<any>();
       }
       if (old) {
+        s.rerunCursorGeneratedAt = Number(old.generated_at) || 0;
+        s.rerunCursorClipId = Number(old.id) || 0;
         s.mediaSequence++;
         s.window.push({
           sequence: s.mediaSequence,

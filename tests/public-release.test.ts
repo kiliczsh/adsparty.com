@@ -110,4 +110,14 @@ describe("public release contract", () => {
     expect(station).toContain('u.pathname === "/archive-ready"');
     expect(read("media-container/server.mjs")).toContain('"content-length"');
   });
+
+  it("walks the complete HLS rerun archive with a persistent cursor", () => {
+    const station = read("src/station-do.ts");
+    expect(station).toContain("rerunCursorGeneratedAt");
+    expect(station).toContain("rerunCursorClipId");
+    expect(station).toContain(
+      "ORDER BY COALESCE(c.generated_at,0) ASC,c.id ASC LIMIT 1",
+    );
+    expect(station).not.toContain("liveTail.results.at(-1)");
+  });
 });
