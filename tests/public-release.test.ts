@@ -53,4 +53,14 @@ describe("public release contract", () => {
     expect(app).not.toContain("directQueue.slice(-3)");
     expect(app).toContain("Number(clip.sequence) > directSequence");
   });
+
+  it("returns to the latest three playable clips instead of full history", () => {
+    const app = read("public/app.js");
+    const worker = read("src/worker.ts");
+    const station = read("src/station-do.ts");
+    expect(app).toContain('fetch("/live/latest.json"');
+    expect(worker).toContain('u.pathname === "/live/latest.json"');
+    expect(station).toContain("ORDER BY c.generated_at DESC,c.id DESC LIMIT 3");
+    expect(station).toContain("old = liveTail.results.at(-1) || null");
+  });
 });

@@ -611,10 +611,10 @@ async function goToLiveEdge() {
   const button = $("#liveEdge");
   button.classList.remove("live-edge-error", "live-edge-confirmed");
   try {
-    const meta = await fetch("/live/meta.json", { cache: "no-store" }).then(
+    const meta = await fetch("/live/latest.json", { cache: "no-store" }).then(
       (response) => response.json(),
     );
-    const liveTail = meta.clips?.slice(-3) || [];
+    const liveTail = meta.clips || [];
     const target = liveTail[0];
     if (!target) return;
     if (target.mediaUrl) {
