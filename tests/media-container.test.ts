@@ -11,8 +11,9 @@ describe("media packager boundary", () => {
     expect(validBearer(undefined, "correct-token")).toBe(false);
     expect(validBearer("Bearer correct-token", undefined)).toBe(false);
   });
-  it("accepts only HTTPS fal media sources", () => {
+  it("accepts only approved HTTPS media sources", () => {
     expect(validSource("https://v3b.fal.media/files/video.mp4")).toBe(true);
+    expect(validSource("https://cdn1.wiro.ai/files/video.mp4")).toBe(true);
     expect(validSource("https://fal.media/video.mp4")).toBe(false);
     expect(validSource("http://v3b.fal.media/video.mp4")).toBe(false);
     expect(validSource("https://fal.media.attacker.example/video.mp4")).toBe(

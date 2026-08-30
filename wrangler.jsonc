@@ -31,7 +31,7 @@
       "class_name": "MediaPackager",
       "image": "./media-container/Dockerfile",
       "max_instances": 1,
-      "instance_type": "standard-1",
+      "instance_type": "standard-2",
       "constraints": { "regions": ["WEUR", "EEUR"] },
     },
   ],
@@ -47,6 +47,7 @@
   "queues": {
     "producers": [
       { "binding": "GENERATION_QUEUE", "queue": "televole-generation" },
+      { "binding": "PACKAGING_QUEUE", "queue": "televole-packaging" },
     ],
     "consumers": [
       {
@@ -54,6 +55,13 @@
         "max_batch_size": 1,
         "max_retries": 3,
         "dead_letter_queue": "televole-generation-dlq",
+      },
+      {
+        "queue": "televole-packaging",
+        "max_batch_size": 1,
+        "max_concurrency": 1,
+        "max_retries": 3,
+        "dead_letter_queue": "televole-packaging-dlq",
       },
     ],
   },

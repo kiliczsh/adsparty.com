@@ -3,6 +3,7 @@ export interface Env {
   MEDIA: R2Bucket;
   STATION: DurableObjectNamespace;
   GENERATION_QUEUE: Queue;
+  PACKAGING_QUEUE: Queue;
   ASSETS: Fetcher;
   BRAND_NAME: string;
   FAL_MODEL: string;
@@ -49,3 +50,4 @@ export type GenerationMessage = {
   falRequestId?: string;
   attempt?: number;
 };
+export type PackagingMessage = { jobId: string };

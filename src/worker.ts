@@ -22,7 +22,7 @@ import {
   type Policy,
 } from "./core";
 import { assertTestStripe, checkout, webhook } from "./billing";
-import type { Env, GenerationMessage } from "./types";
+import type { Env, GenerationMessage, PackagingMessage } from "./types";
 import {
   getWiroTaskDetail,
   submitWiroTask,
@@ -1210,7 +1210,7 @@ async function completeGenerationSource(
       "INSERT OR REPLACE INTO settings(key,value,updated_at) VALUES(?,?,?)",
     ).bind(`clip_source:${clip.id}`, url, sourceAt),
     env.DB.prepare(
-      "UPDATE generation_jobs SET status='source_ready',started_at=?,error=NULL WHERE id=? AND status!='ready'",
+      "UPDATE generation_jobs SET status='source_ready',started_at=?,retry_count=0,error=NULL WHERE id=? AND status!='ready'",
     ).bind(sourceAt, x.jobId),
     env.DB.prepare(
       "UPDATE messages SET status='ready',ready_at=COALESCE(ready_at,?) WHERE job_id=? AND status='generating'",
@@ -1244,36 +1244,154 @@ async function completeGenerationSource(
     msg.ack();
     return;
   }
-  const packagingAt = Math.floor(Date.now() / 1000);
-  const claim = await env.DB.prepare(
-    "UPDATE generation_jobs SET status='packaging',started_at=? WHERE id=? AND status='source_ready' AND NOT EXISTS (SELECT 1 FROM generation_jobs WHERE status='packaging' AND id!=?) RETURNING id",
-  )
-    .bind(packagingAt, x.jobId, x.jobId)
-    .first();
-  if (!claim) {
-    await env.GENERATION_QUEUE.send(x, { delaySeconds: 20 });
+  await env.PACKAGING_QUEUE.send({ jobId: x.jobId } satisfies PackagingMessage);
+  console.log(JSON.stringify({ event: "packaging_queued", job_id: x.jobId }));
+  msg.ack();
+}
+async function processPackaging(msg: Message<PackagingMessage>, env: Env) {
+  const x = msg.body,
+    now = Math.floor(Date.now() / 1000);
+  if (!env.MEDIA_PACKAGER || !env.PACKAGER_TOKEN) {
+    console.warn(
+      JSON.stringify({
+        event: "archive_skipped",
+        job_id: x.jobId,
+        error: "media_packager_unavailable",
+      }),
+    );
     msg.ack();
     return;
   }
-  const pr = await env.MEDIA_PACKAGER.getByName("packager").fetch(
-    "https://packager/package",
-    {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${env.PACKAGER_TOKEN}`,
-      },
-      body: JSON.stringify({ source_url: url, generation_id: x.jobId }),
-    },
+  const job = await env.DB.prepare(
+    "SELECT status,retry_count,started_at FROM generation_jobs WHERE id=?",
+  )
+    .bind(x.jobId)
+    .first<{
+      status: string;
+      retry_count: number;
+      started_at: number | null;
+    }>();
+  const clip = await env.DB.prepare(
+    "SELECT c.id,c.ready,c.segment_filename,c.r2_key,c.duration,src.value source_url FROM clips c LEFT JOIN settings src ON src.key='clip_source:'||c.id WHERE c.generation_job_id=?",
+  )
+    .bind(x.jobId)
+    .first<{
+      id: number;
+      ready: number;
+      segment_filename: string | null;
+      r2_key: string | null;
+      duration: number;
+      source_url: string | null;
+    }>();
+  if (!job || !clip?.source_url || job.status === "failed") {
+    msg.ack();
+    return;
+  }
+  if (clip.ready && clip.segment_filename && clip.r2_key) {
+    await env.DB.prepare(
+      "UPDATE generation_jobs SET status='ready',ended_at=COALESCE(ended_at,?),error=NULL WHERE id=?",
+    )
+      .bind(now, x.jobId)
+      .run();
+    msg.ack();
+    return;
+  }
+  if (
+    job.status === "packaging" &&
+    !packagingClaimable(job.status, job.started_at, now)
+  ) {
+    await env.PACKAGING_QUEUE.send(x, { delaySeconds: 30 });
+    msg.ack();
+    return;
+  }
+  const claim = await env.DB.prepare(
+    "UPDATE generation_jobs SET status='packaging',started_at=?,error=NULL WHERE id=? AND (status='source_ready' OR (status='packaging' AND started_at<?)) RETURNING id",
+  )
+    .bind(now, x.jobId, now - 300)
+    .first();
+  if (!claim) {
+    msg.ack();
+    return;
+  }
+  console.log(
+    JSON.stringify({
+      event: "packaging_start",
+      job_id: x.jobId,
+      clip_id: clip.id,
+    }),
   );
-  if (!pr.ok) {
+  try {
+    const pr = await env.MEDIA_PACKAGER.getByName("packager").fetch(
+      "https://packager/package",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${env.PACKAGER_TOKEN}`,
+        },
+        body: JSON.stringify({
+          source_url: clip.source_url,
+          generation_id: x.jobId,
+        }),
+      },
+    );
+    if (!pr.ok || !pr.body) throw new Error("media_packaging_failed");
+    const duration = Number(
+        pr.headers.get("x-media-duration") || clip.duration,
+      ),
+      filename = `${String(clip.id).padStart(6, "0")}.ts`,
+      key = `segments/${filename}`;
+    if (!(await env.MEDIA.head(key)))
+      await env.MEDIA.put(key, pr.body, {
+        httpMetadata: {
+          contentType: "video/mp2t",
+          cacheControl: "public,max-age=31536000,immutable",
+        },
+      });
+    const finishedAt = Math.floor(Date.now() / 1000);
+    await env.DB.batch([
+      env.DB.prepare(
+        "UPDATE clips SET segment_filename=?,r2_key=?,duration=?,ready=1 WHERE id=?",
+      ).bind(filename, key, duration, clip.id),
+      env.DB.prepare(
+        "UPDATE generation_jobs SET status='ready',ended_at=?,error=NULL WHERE id=?",
+      ).bind(finishedAt, x.jobId),
+    ]);
+    try {
+      await station(env).fetch("https://station/archive-ready", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ clipId: clip.id, filename, duration }),
+      });
+    } catch {
+      console.warn(
+        JSON.stringify({
+          event: "archive_window_upgrade_failed",
+          clip_id: clip.id,
+          job_id: x.jobId,
+        }),
+      );
+    }
+    console.log(
+      JSON.stringify({
+        event: "clip_archived",
+        clip_id: clip.id,
+        job_id: x.jobId,
+        mode: pr.headers.get("x-media-mode") || "unknown",
+        total_ms: Number(pr.headers.get("x-media-total-ms") || 0),
+        download_ms: Number(pr.headers.get("x-media-download-ms") || 0),
+        ffmpeg_ms: Number(pr.headers.get("x-media-ffmpeg-ms") || 0),
+      }),
+    );
+    msg.ack();
+  } catch {
     if (Number(job.retry_count || 0) < 2) {
       await env.DB.prepare(
         "UPDATE generation_jobs SET status='source_ready',started_at=?,retry_count=retry_count+1,error='media_packaging_failed' WHERE id=? AND status='packaging'",
       )
         .bind(Math.floor(Date.now() / 1000), x.jobId)
         .run();
-      await env.GENERATION_QUEUE.send(x, { delaySeconds: 30 });
+      await env.PACKAGING_QUEUE.send(x, { delaySeconds: 30 });
       msg.ack();
       return;
     }
@@ -1282,36 +1400,15 @@ async function completeGenerationSource(
     )
       .bind(Math.floor(Date.now() / 1000), x.jobId)
       .run();
+    console.error(
+      JSON.stringify({
+        event: "packaging_failed",
+        job_id: x.jobId,
+        clip_id: clip.id,
+      }),
+    );
     msg.ack();
-    return;
   }
-  const duration = Number(pr.headers.get("x-media-duration") || sourceDuration),
-    filename = `${String(clip.id).padStart(6, "0")}.ts`,
-    key = `segments/${filename}`;
-  if (!(await env.MEDIA.head(key)))
-    await env.MEDIA.put(key, pr.body, {
-      httpMetadata: {
-        contentType: "video/mp2t",
-        cacheControl: "public,max-age=31536000,immutable",
-      },
-    });
-  const finishedAt = Math.floor(Date.now() / 1000);
-  await env.DB.batch([
-    env.DB.prepare(
-      "UPDATE clips SET segment_filename=?,r2_key=?,duration=?,ready=1 WHERE id=?",
-    ).bind(filename, key, duration, clip.id),
-    env.DB.prepare(
-      "UPDATE generation_jobs SET status='ready',ended_at=?,error=NULL WHERE id=?",
-    ).bind(finishedAt, x.jobId),
-  ]);
-  console.log(
-    JSON.stringify({
-      event: "clip_archived",
-      clip_id: clip.id,
-      job_id: x.jobId,
-    }),
-  );
-  msg.ack();
 }
 async function failJob(env: Env, x: GenerationMessage, error: string) {
   const now = Math.floor(Date.now() / 1000);
@@ -1347,7 +1444,16 @@ export default {
       return finalize(req, json({ error: "internal_error" }, 500));
     }
   },
-  async queue(batch: MessageBatch<GenerationMessage>, env: Env) {
-    for (const m of batch.messages) await processGeneration(m, env);
+  async queue(
+    batch: MessageBatch<GenerationMessage | PackagingMessage>,
+    env: Env,
+  ) {
+    if (batch.queue === "televole-packaging") {
+      for (const m of batch.messages)
+        await processPackaging(m as Message<PackagingMessage>, env);
+      return;
+    }
+    for (const m of batch.messages)
+      await processGeneration(m as Message<GenerationMessage>, env);
   },
-} satisfies ExportedHandler<Env, GenerationMessage>;
+} satisfies ExportedHandler<Env, GenerationMessage | PackagingMessage>;

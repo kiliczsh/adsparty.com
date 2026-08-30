@@ -221,9 +221,9 @@ export class Station extends DurableObject<Env> {
       console.log(JSON.stringify({ event: "bootstrap_insert" }));
     }
     const stale = await this.env.DB.prepare(
-      "SELECT id,status,fal_request_id,expanded_prompt,provider FROM generation_jobs WHERE (status IN ('submitted','source_ready') AND started_at<?) OR (status='packaging' AND started_at<?) ORDER BY created_at LIMIT 2",
+      "SELECT id,status,fal_request_id,expanded_prompt,provider FROM generation_jobs WHERE (status='submitted' AND started_at<?) OR (status='source_ready' AND started_at<?) OR (status='packaging' AND started_at<?) ORDER BY CASE WHEN status IN ('source_ready','packaging') THEN 0 ELSE 1 END,created_at DESC LIMIT 2",
     )
-      .bind(now - 90, now - 600)
+      .bind(now - 90, now - 90, now - 300)
       .all<{
         id: string;
         status: string;
@@ -232,6 +232,23 @@ export class Station extends DurableObject<Env> {
         provider: "fal" | "wiro";
       }>();
     for (const job of stale.results) {
+      if (job.status === "source_ready" || job.status === "packaging") {
+        const packagingClaim =
+          job.status === "packaging"
+            ? await this.env.DB.prepare(
+                "UPDATE generation_jobs SET status='source_ready',started_at=?,retry_count=retry_count+1,error='media_packaging_stale' WHERE id=? AND status='packaging' RETURNING id",
+              )
+                .bind(now, job.id)
+                .first()
+            : await this.env.DB.prepare(
+                "UPDATE generation_jobs SET started_at=? WHERE id=? AND status='source_ready' AND started_at<? RETURNING id",
+              )
+                .bind(now, job.id, now - 90)
+                .first();
+        if (!packagingClaim) continue;
+        await this.env.PACKAGING_QUEUE.send({ jobId: job.id });
+        continue;
+      }
       const claimed = await this.env.DB.prepare(
         "UPDATE generation_jobs SET status=?,started_at=?,retry_count=retry_count+1 WHERE id=? AND status=? RETURNING id",
       )
@@ -461,6 +478,28 @@ export class Station extends DurableObject<Env> {
       s.recentClipIds = (s.recentClipIds || []).filter((id) => id !== clipId);
       await this.save(s);
       return Response.json({ ok: true });
+    }
+    if (u.pathname === "/archive-ready" && req.method === "POST") {
+      const x = await req.json<{
+        clipId: number;
+        filename: string;
+        duration: number;
+      }>();
+      if (!/^\d{6}\.ts$/.test(x.filename))
+        return Response.json({ error: "invalid_segment" }, { status: 400 });
+      let upgraded = 0;
+      s.window = s.window.map((entry) => {
+        if (entry.clipId !== Number(x.clipId)) return entry;
+        upgraded++;
+        return {
+          ...entry,
+          filename: x.filename,
+          mediaUrl: undefined,
+          duration: Number(x.duration) || entry.duration,
+        };
+      });
+      await this.save(s);
+      return Response.json({ ok: true, upgraded });
     }
     if (u.pathname === "/job" && req.method === "POST") {
       const x = await req.json<any>();

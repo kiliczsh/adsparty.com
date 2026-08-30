@@ -90,4 +90,18 @@ describe("public release contract", () => {
     expect(app).toContain("(base - 3 + clips.length) % clips.length");
     expect(app).toContain("previousRecordedClip");
   });
+
+  it("serializes packaging on a warm dedicated standard-2 container", () => {
+    const wrangler = read("wrangler.jsonc");
+    const container = read("src/media-container.ts");
+    const worker = read("src/worker.ts");
+    const station = read("src/station-do.ts");
+    expect(wrangler).toContain('"binding": "PACKAGING_QUEUE"');
+    expect(wrangler).toContain('"queue": "televole-packaging"');
+    expect(wrangler).toContain('"max_concurrency": 1');
+    expect(wrangler).toContain('"instance_type": "standard-2"');
+    expect(container).toContain('sleepAfter = "10m"');
+    expect(worker).toContain('batch.queue === "televole-packaging"');
+    expect(station).toContain('u.pathname === "/archive-ready"');
+  });
 });

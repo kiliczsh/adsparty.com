@@ -13,7 +13,9 @@ const MAX_SOURCE_BYTES = Number(
 );
 const DOWNLOAD_TIMEOUT_MS = Number(process.env.DOWNLOAD_TIMEOUT_MS || 120_000);
 const MEDIA_TIMEOUT_MS = Number(process.env.MEDIA_TIMEOUT_MS || 180_000);
-const allowedHosts = (process.env.PACKAGER_SOURCE_HOSTS || ".fal.media")
+const allowedHosts = (
+  process.env.PACKAGER_SOURCE_HOSTS || ".fal.media,.wiro.ai"
+)
   .split(",")
   .map((x) => x.trim().toLowerCase())
   .filter(Boolean);
@@ -95,19 +97,31 @@ async function packageVideo(url, id) {
   const dir = await mkdtemp(join(tmpdir(), "adsparty-"));
   const input = join(dir, `${id}.mp4`),
     output = join(dir, `${id}.ts`);
+  const startedAt = Date.now();
   try {
     await download(url, input);
-    const duration = Number(
+    const downloadMs = Date.now() - startedAt;
+    const probe = JSON.parse(
       await run("ffprobe", [
         "-v",
         "error",
+        "-show_streams",
         "-show_entries",
-        "format=duration",
+        "format=duration:stream=codec_type,codec_name,pix_fmt",
         "-of",
-        "default=nw=1:nk=1",
+        "json",
         input,
       ]),
     );
+    const duration = Number(probe.format?.duration);
+    const videoCodec =
+      probe.streams?.find((stream) => stream.codec_type === "video")
+        ?.codec_name || "unknown";
+    const audioCodec =
+      probe.streams?.find((stream) => stream.codec_type === "audio")
+        ?.codec_name || "none";
+    const ffmpegAt = Date.now();
+    let mode = "remux";
     try {
       await run("ffmpeg", [
         "-y",
@@ -126,6 +140,7 @@ async function packageVideo(url, id) {
         output,
       ]);
     } catch {
+      mode = "transcode";
       await run("ffmpeg", [
         "-y",
         "-i",
@@ -161,7 +176,21 @@ async function packageVideo(url, id) {
         output,
       ]);
     }
-    return { dir, output, duration: Number.isFinite(duration) ? duration : 10 };
+    const metrics = {
+      mode,
+      downloadMs,
+      ffmpegMs: Date.now() - ffmpegAt,
+      totalMs: Date.now() - startedAt,
+      videoCodec,
+      audioCodec,
+    };
+    console.log(JSON.stringify({ event: "package_complete", id, ...metrics }));
+    return {
+      dir,
+      output,
+      duration: Number.isFinite(duration) ? duration : 10,
+      metrics,
+    };
   } catch (e) {
     await rm(dir, { recursive: true, force: true });
     throw e;
@@ -204,6 +233,10 @@ export const server = http.createServer(async (req, res) => {
     res.writeHead(200, {
       "content-type": "video/mp2t",
       "x-media-duration": String(work.duration),
+      "x-media-mode": work.metrics.mode,
+      "x-media-total-ms": String(work.metrics.totalMs),
+      "x-media-download-ms": String(work.metrics.downloadMs),
+      "x-media-ffmpeg-ms": String(work.metrics.ffmpegMs),
       "cache-control": "no-store",
     });
     await pipeline(createReadStream(work.output), res);
