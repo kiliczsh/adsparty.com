@@ -7,6 +7,8 @@ import {
   submitAndPollWiroTask,
   submitWiroTask,
   wiroErrorCode,
+  wiroGenerationSeed,
+  wiroLanguageLockedPrompt,
   wiroSignature,
   wiroTaskState,
   wiroVideoOutput,
@@ -44,6 +46,40 @@ describe("wiro authentication", () => {
     expect(await wiroSignature("project-key", "project-secret", "123")).toBe(
       expected,
     );
+  });
+});
+
+describe("wiro spoken-language policy", () => {
+  it("allows only Turkish and English speech while keeping directions silent", () => {
+    const prompt = wiroLanguageLockedPrompt(
+      'A woman says, "Bu akşam çıkalım."',
+    );
+    expect(prompt).toContain("Turkish or English only");
+    expect(prompt).toContain("AUDIO MODE — EXPLICIT DIALOGUE");
+    expect(prompt).toContain("[SILENT PRODUCTION BRIEF]");
+    expect(prompt).toContain('"Bu akşam çıkalım."');
+    expect(prompt).toContain("must never be recited");
+    expect(prompt).toContain("Do not add narration");
+  });
+
+  it("forbids invented voices when the scene has no quoted dialogue", () => {
+    const prompt = wiroLanguageLockedPrompt("Fire in the hole!!! Goal");
+    expect(prompt).toContain("AUDIO MODE — NO SPEECH");
+    expect(prompt).toContain("environmental ambience and sound effects only");
+    expect(prompt).toContain("No human voice, intelligible words");
+  });
+});
+
+describe("wiro generation seed", () => {
+  it("derives a stable but job-specific seed in per-job mode", () => {
+    const first = wiroGenerationSeed("per-job", "job-one");
+    expect(first).toBe(wiroGenerationSeed("per-job", "job-one"));
+    expect(first).not.toBe(wiroGenerationSeed("per-job", "job-two"));
+    expect(first).toBeGreaterThan(0);
+  });
+
+  it("retains an explicitly configured numeric seed", () => {
+    expect(wiroGenerationSeed("1000", "job-one")).toBe(1000);
   });
 });
 
@@ -97,7 +133,11 @@ describe("wiro task lifecycle", () => {
         "ratio",
         "seed",
       ]),
-    ).toEqual({ ...input, seed: String(input.seed) });
+    ).toEqual({
+      ...input,
+      prompt: wiroLanguageLockedPrompt(input.prompt),
+      seed: String(input.seed),
+    });
   });
 
   it("polls by task id until the documented completed status", async () => {
@@ -157,6 +197,7 @@ describe("wiro task lifecycle", () => {
 
   it("accepts only documented statuses and video outputs", async () => {
     expect(wiroTaskState("task_queue")).toBe("running");
+    expect(wiroTaskState("task_postprocess_start")).toBe("running");
     expect(wiroTaskState("task_postprocess_end")).toBe("completed");
     expect(wiroTaskState("task_cancel")).toBe("cancelled");
     expect(() => wiroTaskState("invented_status")).toThrow(

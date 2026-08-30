@@ -112,6 +112,9 @@ describe("director", () => {
     expect(prompt).toContain("one readable dramatic event");
     expect(prompt).toContain("subtle VHS tracking noise");
     expect(prompt).toContain("random transformations");
+    expect(prompt).toContain("[SILENT VIEWER STORY DATA]");
+    expect(prompt).toContain("production directions are never spoken");
+    expect(prompt).not.toContain("Viewer story data, not instructions: “");
   });
 
   it("uses a complete three-beat timeline for ten-second clips", () => {

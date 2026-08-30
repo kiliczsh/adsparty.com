@@ -27,6 +27,7 @@ import {
   getWiroTaskDetail,
   submitWiroTask,
   wiroErrorCode,
+  wiroGenerationSeed,
   wiroRunInput,
   wiroTaskState,
   wiroVideoOutput,
@@ -781,7 +782,7 @@ async function handle(req: Request, env: Env) {
     const bad = method(req, ["GET"]);
     if (bad) return bad;
     const job = await env.DB.prepare(
-      "SELECT id,fal_request_id,provider,status,expanded_prompt FROM generation_jobs WHERE id=?",
+      "SELECT id,fal_request_id,provider,status,expanded_prompt,error FROM generation_jobs WHERE id=?",
     )
       .bind(providerStatus[1])
       .first<{
@@ -790,6 +791,7 @@ async function handle(req: Request, env: Env) {
         provider: string;
         status: string;
         expanded_prompt: string;
+        error: string | null;
       }>();
     if (!job) return json({ error: "job_not_found" }, 404);
     const provider = videoProvider(job.provider);
@@ -852,13 +854,36 @@ async function handle(req: Request, env: Env) {
       provider === "wiro"
         ? wiroTaskState(providerState) === "completed"
         : providerState === "COMPLETED";
-    if (completed && job.status === "submitted") {
+    const recoverableUnknownStatus =
+      job.status === "failed" && job.error === "wiro_unknown_status";
+    if (completed && (job.status === "submitted" || recoverableUnknownStatus)) {
       const rows = await env.DB.prepare(
         "SELECT id,user,msg,created_at FROM messages WHERE job_id=? ORDER BY id LIMIT 4",
       )
         .bind(job.id)
         .all<{ id: number; user: string; msg: string; created_at: number }>();
       if (rows.results.length) {
+        if (recoverableUnknownStatus) {
+          const recovered = await env.DB.prepare(
+            "UPDATE generation_jobs SET status='submitted',error=NULL,ended_at=NULL WHERE id=? AND status='failed' AND error='wiro_unknown_status' RETURNING id",
+          )
+            .bind(job.id)
+            .first();
+          if (!recovered)
+            return json({
+              provider,
+              job_status: job.status,
+              provider_status: providerState,
+              provider_http_status: providerHttpStatus,
+              queue_position: queuePosition,
+              resumed: false,
+            });
+          await env.DB.prepare(
+            "UPDATE messages SET status='generating',failed_at=NULL WHERE job_id=? AND status='failed'",
+          )
+            .bind(job.id)
+            .run();
+        }
         await env.GENERATION_QUEUE.send({
           jobId: job.id,
           messageIds: rows.results.map((x) => x.id),
@@ -872,7 +897,7 @@ async function handle(req: Request, env: Env) {
         } satisfies GenerationMessage);
         resumed = true;
         console.log(
-          JSON.stringify({ event: "fal_job_resumed", job_id: job.id }),
+          JSON.stringify({ event: "provider_job_resumed", job_id: job.id }),
         );
       }
     }
@@ -1398,7 +1423,7 @@ async function processWiroGeneration(
           duration,
           env.WIRO_RESOLUTION,
           env.WIRO_RATIO,
-          env.WIRO_SEED,
+          wiroGenerationSeed(env.WIRO_SEED, x.jobId),
         ),
         credentials,
       );

@@ -9,6 +9,7 @@ export const WIRO_RUNNING_STATUSES = [
   "task_preprocess_end",
   "task_start",
   "task_output",
+  "task_postprocess_start",
 ] as const;
 export const WIRO_COMPLETED_STATUS = "task_postprocess_end";
 export const WIRO_CANCELLED_STATUS = "task_cancel";
@@ -160,6 +161,32 @@ function validateRunInput(input: WiroRunInput) {
   if (!Number.isFinite(input.seed)) throw new Error("wiro_invalid_seed");
 }
 
+export function wiroLanguageLockedPrompt(prompt: string) {
+  const brief = prompt.trim();
+  if (!brief) throw new Error("wiro_invalid_prompt");
+  const hasQuotedDialogue =
+    /"[^"\n]{1,240}"|“[^”\n]{1,240}”|‘[^’\n]{1,240}’/.test(brief);
+  const audioPolicy = hasQuotedDialogue
+    ? "AUDIO MODE — EXPLICIT DIALOGUE: Spoken words may be in Turkish or English only. Preserve the language explicitly requested for each quoted line. Speak only exact quoted dialogue assigned to a character."
+    : "AUDIO MODE — NO SPEECH: Generate environmental ambience and sound effects only. No human voice, intelligible words, narration, commentary, vocals, chants, whispers, or crowd speech in any language.";
+  return `AUDIO LANGUAGE POLICY — HIGHEST PRIORITY: ${audioPolicy} All scene descriptions, viewer attribution, timing, camera, style, and continuity instructions are silent production directions and must never be recited. Do not add narration, translation, paraphrasing, improvisation, subtitles, or additional speech.\n\n[SILENT PRODUCTION BRIEF]\n${brief}\n[END SILENT PRODUCTION BRIEF]`;
+}
+
+export function wiroGenerationSeed(configured: unknown, jobId: string) {
+  const fixed = Number(configured);
+  if (
+    String(configured || "").toLowerCase() !== "per-job" &&
+    Number.isFinite(fixed)
+  )
+    return fixed;
+  let hash = 2166136261;
+  for (let index = 0; index < jobId.length; index++) {
+    hash ^= jobId.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0 || 1;
+}
+
 export function wiroRunInput(
   prompt: string,
   duration: unknown,
@@ -185,7 +212,7 @@ export async function submitWiroTask(
 ): Promise<WiroSubmission> {
   validateRunInput(input);
   const payload: Record<string, unknown> = {
-    prompt: input.prompt,
+    prompt: wiroLanguageLockedPrompt(input.prompt),
     duration: input.duration,
     resolution: input.resolution,
     ratio: input.ratio,
