@@ -232,7 +232,7 @@ export function buildPrompt(
   duration = 5,
 ) {
   const chat = selected
-    .map((x) => `${x.user}: ${x.msg}`)
+    .map((x) => x.msg)
     .join(" · ")
     .slice(0, 700);
   const seconds = Math.max(5, Math.min(15, Math.round(duration) || 5));

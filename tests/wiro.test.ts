@@ -1,5 +1,6 @@
 import { createHmac } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
+import { buildPrompt } from "../src/core";
 import {
   WIRO_DETAIL_ENDPOINT,
   WIRO_RUN_ENDPOINT,
@@ -49,49 +50,32 @@ describe("wiro authentication", () => {
   });
 });
 
-describe("wiro spoken-language policy", () => {
-  it("allows only Turkish and English speech while keeping directions silent", () => {
-    const prompt = wiroLanguageLockedPrompt(
-      'A woman says, "Bu akşam çıkalım."',
+describe("wiro minimal prompt", () => {
+  it("sends only the viewer message and never the username", () => {
+    const message = 'Balıkçı Türkçe "Bugün deniz çok sakin." desin.';
+    const stationPrompt = buildPrompt(
+      [{ id: 1, user: "private_username", msg: message, created_at: 1 }],
+      {
+        props: [],
+        last_form: null,
+        previous_setting: null,
+        previous_owner: null,
+        note: "",
+      },
     );
-    expect(prompt).toContain("Turkish (tr-TR)");
-    expect(prompt).toContain("AUDIO MODE — EXACT TURKISH DIALOGUE");
-    expect(prompt).toContain("[SILENT PRODUCTION BRIEF]");
-    expect(prompt).toContain('"Bu akşam çıkalım."');
-    expect(prompt).toContain("must never be recited");
-    expect(prompt).toContain("Do not add narration");
+    const prompt = wiroLanguageLockedPrompt(stationPrompt);
+    expect(prompt).toBe(message);
+    expect(prompt).not.toContain("private_username");
+    expect(prompt).not.toContain("Create a scene");
+    expect(prompt).not.toContain("House finish");
   });
 
-  it("uses a short Turkish-only speech mode when Turkish is explicitly requested", () => {
-    const prompt = wiroLanguageLockedPrompt(
-      "İstanbul Aksaray tanıtım videosu Türkçe",
-    );
-    expect(prompt).toContain("AUDIO MODE — TURKISH SPEECH ONLY");
-    expect(prompt).toContain("at most eight words");
-    expect(prompt).toContain("natural Istanbul pronunciation");
-    expect(prompt).toContain("use non-vocal ambience instead");
-  });
-
-  it("extracts quoted speech from one chat message without reciting directions", () => {
-    const prompt = wiroLanguageLockedPrompt(
-      'Create a scene. [SILENT VIEWER STORY DATA] kaptan: Balıkçı Türkçe "Bugün deniz çok sakin." desin. [END SILENT VIEWER STORY DATA] Use one shot.',
-    );
-    expect(prompt).toContain("[ONLY AUDIBLE WORDS — SPEAK VERBATIM ONCE]");
-    expect(prompt).toContain('"Bugün deniz çok sakin."');
-    expect(prompt.match(/"Bugün deniz çok sakin\."/g)).toHaveLength(1);
-    expect(prompt).toContain(
-      "Balıkçı [the exact dialogue is provided only in the audible words block].",
-    );
-    expect(prompt).not.toContain("kaptan:");
-    expect(prompt).not.toContain("Türkçe");
-    expect(prompt).not.toContain("desin");
-  });
-
-  it("forbids invented voices when the scene has no quoted dialogue", () => {
-    const prompt = wiroLanguageLockedPrompt("Fire in the hole!!! Goal");
-    expect(prompt).toContain("AUDIO MODE — NO SPEECH");
-    expect(prompt).toContain("environmental ambience and sound effects only");
-    expect(prompt).toContain("No human voice, intelligible words");
+  it("keeps an already minimal prompt unchanged", () => {
+    expect(
+      wiroLanguageLockedPrompt(
+        'A detective enters an office. He says, "Someone was here."',
+      ),
+    ).toBe('A detective enters an office. He says, "Someone was here."');
   });
 });
 

@@ -73,7 +73,7 @@
     "FAL_ASPECT_RATIO": "16:9",
     "FAL_PROMPT_EXPANSION": "balanced",
     "VIDEO_PROVIDER": "wiro",
-    "WIRO_RESOLUTION": "480P",
+    "WIRO_RESOLUTION": "768P",
     "WIRO_RATIO": "16:9",
     "DIRECTOR_PROVIDER": "deterministic",
     "DIRECTOR_MODEL": "",

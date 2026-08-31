@@ -91,9 +91,8 @@ export async function direct(
             {
               role: "user",
               content: JSON.stringify({
-                candidates: candidates.map(({ id, user, msg, created_at }) => ({
+                candidates: candidates.map(({ id, msg, created_at }) => ({
                   id,
-                  user,
                   msg,
                   created_at,
                 })),

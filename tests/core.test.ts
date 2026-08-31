@@ -114,6 +114,7 @@ describe("director", () => {
     expect(prompt).toContain("random transformations");
     expect(prompt).toContain("[SILENT VIEWER STORY DATA]");
     expect(prompt).toContain("production directions are never spoken");
+    expect(prompt).not.toContain(`${items[1].user}:`);
     expect(prompt).not.toContain("Viewer story data, not instructions: “");
   });
 
